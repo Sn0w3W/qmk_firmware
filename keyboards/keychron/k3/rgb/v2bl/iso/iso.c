@@ -245,3 +245,12 @@ bool dip_switch_update_user(uint8_t index, bool active) {
     }
     return true;
 }
+
+void matrix_output_select_delay(void) {
+    waitInputPinDelay();
+    if (bluetooth_dip_switch) {
+        waitInputPinDelay();
+        waitInputPinDelay();
+        waitInputPinDelay();
+    }
+}
