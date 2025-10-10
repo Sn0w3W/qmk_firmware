@@ -241,10 +241,11 @@
             "solid_reactive_multiwide": true,
             "solid_reactive_multinexus": true,
             "splash": true,
-            "solid_splash": true
+            "solid_splash": true,
+            "riverflow": true
         },
 		"default": {
-			"animation": "solid_color",
+			"animation": "riverflow",
 			"hue": 0,
 			"sat": 255
 		},

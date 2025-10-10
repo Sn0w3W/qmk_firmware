@@ -183,11 +183,10 @@ bool rgb_matrix_indicators_advanced_user(uint8_t led_min, uint8_t led_max) {
                 if (index >= led_min && index < led_max && index != NO_LED) {
                 uint16_t keycode = keymap_key_to_keycode(layer, (keypos_t){col, row});
 
-                    if (keycode > KC_TRNS) {
-                        rgb_matrix_set_color(index, 255, 255, 255);
-                        rgb_matrix_set_color(index, 255, 255, 255);
-                    } else if (keycode == KC_TRNS) {
+                    if (keycode == KC_TRNS || ((keycode == BT_PROFILE1 || keycode == BT_PROFILE2 || keycode == BT_PROFILE3 || keycode == BT_PAIR || keycode == BT_RESET || keycode == BT_BATTERY) && !bluetooth_dip_switch)) {
                         rgb_matrix_set_color(index, 1, 1, 1);
+                    } else {
+                        rgb_matrix_set_color(index, RGB_WHITE);
                     }
                 }
             }
@@ -254,11 +253,14 @@ bool dip_switch_update_user(uint8_t index, bool active) {
     return true;
 }
 
-void matrix_output_select_delay(void) {
-    waitInputPinDelay();
-    if (bluetooth_dip_switch) {
+#ifdef BLUETOOTH_ENABLE
+    // Keychron K3-specific. Without it keyboard spams Tab, ` and other keys in bluetooth mode.
+    void matrix_output_select_delay(void) {
         waitInputPinDelay();
-        waitInputPinDelay();
-        waitInputPinDelay();
+        if (bluetooth_dip_switch) {
+            waitInputPinDelay();
+            waitInputPinDelay();
+            waitInputPinDelay();
+        }
     }
-}
+#endif
