@@ -38,8 +38,8 @@ static uint32_t last_update_time = 0;
 #    define BT_PROFILE_LED_START_INDEX 17
 #    define BATTERY_LED_INDEX 66
 
-#    define BT_PAIRING_BLINK_MS 62
-#    define BT_CONNECTING_BLINK_MS 125
+#    define BT_PAIRING_BLINK_MS 250
+#    define BT_CONNECTING_BLINK_MS 250
 #    define BT_CONNECTED_DISCONNECTED_BLINK_MS 250
 
 #    define NUM_BATTERY_LEVELS (sizeof(BATTERY_COLOR_MAP) / sizeof(BATTERY_COLOR_MAP[0]))
@@ -77,6 +77,8 @@ static void set_profile_led_blinking(uint32_t current_time, uint32_t blink_ms, u
     uint8_t profile_index = BT_PROFILE_LED_START_INDEX + bt_profile;
     if ((current_time / blink_ms) % 2 == 0) {
         rgb_matrix_set_color(profile_index, r, g, b);
+    } else {
+        rgb_matrix_set_color(profile_index, 0, 0, 0);
     }
 }
 
@@ -178,9 +180,15 @@ bool rgb_matrix_indicators_advanced_user(uint8_t led_min, uint8_t led_max) {
             for (uint8_t col = 0; col < MATRIX_COLS; ++col) {
                 uint8_t index = g_led_config.matrix_co[row][col];
 
-                if (index >= led_min && index < led_max && index != NO_LED &&
-                    keymap_key_to_keycode(layer, (keypos_t){col, row}) > KC_TRNS) {
-                    rgb_matrix_set_color(index, RGB_WHITE);
+                if (index >= led_min && index < led_max && index != NO_LED) {
+                uint16_t keycode = keymap_key_to_keycode(layer, (keypos_t){col, row});
+
+                    if (keycode > KC_TRNS) {
+                        rgb_matrix_set_color(index, 255, 255, 255);
+                        rgb_matrix_set_color(index, 255, 255, 255);
+                    } else if (keycode == KC_TRNS) {
+                        rgb_matrix_set_color(index, 1, 1, 1);
+                    }
                 }
             }
         }

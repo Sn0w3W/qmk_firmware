@@ -250,6 +250,7 @@
 			"hue": 0,
 			"sat": 255
 		},
-        "sleep": false
+        "sleep": true,
+        "timeout": 30000
     }
 }
