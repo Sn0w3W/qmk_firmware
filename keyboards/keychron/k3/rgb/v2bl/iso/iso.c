@@ -40,7 +40,7 @@ static uint32_t last_update_time = 0;
 
 #    define BT_PAIRING_BLINK_MS 250
 #    define BT_CONNECTING_BLINK_MS 250
-#    define BT_CONNECTED_DISCONNECTED_BLINK_MS 250
+#    define BT_DISCONNECTED_BLINK_MS 250
 
 #    define NUM_BATTERY_LEVELS (sizeof(BATTERY_COLOR_MAP) / sizeof(BATTERY_COLOR_MAP[0]))
 
@@ -102,7 +102,6 @@ void iton_bt_enters_connection_state() {
 }
 
 void iton_bt_disconnected() {
-    set_output(OUTPUT_NONE);
     ev_disconnected_timer = BT_DISCONNECTED_DURATION_MS;
     ev_connected_timer    = 0;
     ev_pairing_flag       = false;
@@ -184,7 +183,7 @@ bool rgb_matrix_indicators_advanced_user(uint8_t led_min, uint8_t led_max) {
                 uint16_t keycode = keymap_key_to_keycode(layer, (keypos_t){col, row});
 
                     if (keycode == KC_TRNS || ((keycode == BT_PROFILE1 || keycode == BT_PROFILE2 || keycode == BT_PROFILE3 || keycode == BT_PAIR || keycode == BT_RESET || keycode == BT_BATTERY) && !bluetooth_dip_switch)) {
-                        rgb_matrix_set_color(index, 1, 1, 1);
+                        rgb_matrix_set_color(index, 0x01, 0x01, 0x01);
                     } else {
                         rgb_matrix_set_color(index, RGB_WHITE);
                     }
@@ -201,11 +200,11 @@ bool rgb_matrix_indicators_advanced_user(uint8_t led_min, uint8_t led_max) {
     if (ev_pairing_flag) {
         set_profile_led_blinking(current_time, BT_PAIRING_BLINK_MS, RGB_BLUE);
     } else if (ev_connecting_flag) {
-        set_profile_led_blinking(current_time, BT_CONNECTING_BLINK_MS, RGB_YELLOW);
+        set_profile_led_blinking(current_time, BT_CONNECTING_BLINK_MS, RGB_BLUE);
     } else if (ev_connected_timer > 0) {
-        set_profile_led_blinking(current_time, BT_CONNECTED_DISCONNECTED_BLINK_MS, RGB_GREEN);
+        rgb_matrix_set_color(BT_PROFILE_LED_START_INDEX + bt_profile, RGB_WHITE);
     } else if (ev_disconnected_timer > 0) {
-        set_profile_led_blinking(current_time, BT_CONNECTED_DISCONNECTED_BLINK_MS, RGB_RED);
+        set_profile_led_blinking(current_time, BT_DISCONNECTED_BLINK_MS, RGB_RED);
     }
 
     if (ev_connected_timer > elapsed)
@@ -245,6 +244,7 @@ bool dip_switch_update_user(uint8_t index, bool active) {
                 iton_bt_init();
             } else {
                 set_output(OUTPUT_USB);
+                iton_bt_deinit();
             }
             bluetooth_dip_switch = !active;
             return false;
