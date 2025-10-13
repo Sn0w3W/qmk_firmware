@@ -22,6 +22,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #ifdef BLUETOOTH_ENABLE
 #    include "iton_bt.h"
 #    include "outputselect.h"
+#    include "eeconfig.h"
 #endif
 
 #define STARTUP_FLASH_DURATION_MS 1500
@@ -41,6 +42,8 @@ static uint32_t last_update_time = 0;
 #    define BT_PAIRING_BLINK_MS 250
 #    define BT_CONNECTING_BLINK_MS 250
 #    define BT_DISCONNECTED_BLINK_MS 250
+#    define KB_BT_PROFILE_MASK  (0x3u << 0)
+#    define KB_BT_PROFILE_SHIFT 0
 
 #    define NUM_BATTERY_LEVELS (sizeof(BATTERY_COLOR_MAP) / sizeof(BATTERY_COLOR_MAP[0]))
 
@@ -72,6 +75,25 @@ static uint32_t battery_level = 0;
 static uint32_t bt_profile    = 0;
 
 static bool bluetooth_dip_switch = false;
+
+static inline void bt_profile_save(void) {
+    if (!eeconfig_is_enabled()) {
+        eeconfig_init();
+    }
+    uint32_t kb = eeconfig_read_kb();
+    kb &= ~KB_BT_PROFILE_MASK;
+    kb |= ((bt_profile & 0x3u) << KB_BT_PROFILE_SHIFT);
+    eeconfig_update_kb(kb);
+}
+
+static inline void bt_profile_load(void) {
+    if (!eeconfig_is_enabled()) {
+        eeconfig_init();
+    }
+    uint32_t kb = eeconfig_read_kb();
+    uint32_t p  = (kb & KB_BT_PROFILE_MASK) >> KB_BT_PROFILE_SHIFT;
+    bt_profile  = (p <= 2) ? p : 0;
+}
 
 static void set_profile_led_blinking(uint32_t current_time, uint32_t blink_ms, uint8_t r, uint8_t g, uint8_t b) {
     uint8_t profile_index = BT_PROFILE_LED_START_INDEX + bt_profile;
@@ -122,9 +144,11 @@ bool process_record_kb(uint16_t keycode, keyrecord_t *record) {
             case BT_PROFILE2:
             case BT_PROFILE3:
                 {
+                    bt_profile_save();
                     uint8_t profile_idx = keycode - BT_PROFILE1;
-                    iton_bt_switch_profile(profile_idx);
                     bt_profile = profile_idx;
+                    bt_profile_save();
+                    iton_bt_switch_profile(profile_idx);
                 }
                 return false;
             case BT_PAIR:
@@ -242,6 +266,7 @@ bool dip_switch_update_user(uint8_t index, bool active) {
             if (!active) {
                 set_output(OUTPUT_NONE);
                 iton_bt_init();
+                bt_profile_load();
             } else {
                 set_output(OUTPUT_USB);
                 iton_bt_deinit();
