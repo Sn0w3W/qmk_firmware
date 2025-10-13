@@ -35,3 +35,6 @@ echo "[*] Installed version:"
 arm-none-eabi-gcc --version | head -n 1
 
 echo "[✔] ARM GCC successfully installed."
+
+mkdir -p /etc/udev/rules.d
+cp /workspaces/qmk_firmware/util/udev/50-qmk.rules /etc/udev/rules.d/
