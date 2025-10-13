@@ -1,2 +1,0 @@
-BLUETOOTH_ENABLE 		= yes
-BLUETOOTH_DRIVER		= iton_bt
