@@ -36,7 +36,7 @@ static uint32_t last_update_time = 0;
 #    define BT_BATTERY_DURATION_MS 2500
 #    define BT_BATTERY_WAIT_QUERY_DURATION_MS 10000
 
-#    define BT_PROFILE_LED_START_INDEX 17
+#    define BT_PROFILE_LED_START_INDEX 21
 
 #    define BT_PAIRING_BLINK_MS 250
 #    define BT_CONNECTING_BLINK_MS 250
@@ -72,6 +72,7 @@ static uint32_t ev_battery_level_timer = 0;
 
 static uint32_t battery_level = 0;
 static uint32_t bt_profile    = 0;
+static uint8_t  mac_switch  = 0;
 
 static bool bluetooth_dip_switch = false;
 
@@ -224,6 +225,31 @@ bool rgb_matrix_indicators_advanced_user(uint8_t led_min, uint8_t led_max) {
         }
     }
 
+    led_t led_state = host_keyboard_led_state();
+
+    const uint8_t NUM_LED_INDEX  = 16;
+    const uint8_t CAPS_LED_INDEX = 17;
+    const uint8_t MAC_LED_INDEX  = 18;
+    const uint8_t WIN_LED_INDEX  = 19;
+
+    if (led_state.num_lock)
+        rgb_matrix_set_color(NUM_LED_INDEX, RGB_WHITE);
+    else
+        rgb_matrix_set_color(NUM_LED_INDEX, 0, 0, 0);
+
+    if (led_state.caps_lock)
+        rgb_matrix_set_color(CAPS_LED_INDEX, RGB_WHITE);
+    else
+        rgb_matrix_set_color(CAPS_LED_INDEX, 0, 0, 0);
+
+    if (mac_switch) {
+        rgb_matrix_set_color(MAC_LED_INDEX, RGB_WHITE);
+        rgb_matrix_set_color(WIN_LED_INDEX, 0, 0, 0);
+    } else {
+        rgb_matrix_set_color(WIN_LED_INDEX, RGB_WHITE);
+        rgb_matrix_set_color(MAC_LED_INDEX, 0, 0, 0);
+    }
+
 #ifdef BLUETOOTH_ITON_BT
     if (!bluetooth_dip_switch) {
         return true;
@@ -267,6 +293,7 @@ bool dip_switch_update_user(uint8_t index, bool active) {
     switch (index) {
         case 1:
             layer_move(active ? MAC_BASE : WIN_BASE);
+            mac_switch = active;
             return false;
 #ifdef BLUETOOTH_ITON_BT
         case 0:
