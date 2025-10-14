@@ -104,7 +104,6 @@ static void set_profile_led_blinking(uint32_t current_time, uint32_t blink_ms, u
 }
 
 void iton_bt_connection_successful() {
-    set_output(OUTPUT_BLUETOOTH);
     ev_connected_timer = BT_CONNECTION_SUCCESSFUL_DURATION_MS;
     ev_pairing_flag    = false;
     ev_connecting_flag = false;
@@ -123,7 +122,6 @@ void iton_bt_enters_connection_state() {
 }
 
 void iton_bt_disconnected() {
-    set_output(OUTPUT_NONE);
     ev_disconnected_timer = BT_DISCONNECTED_DURATION_MS;
     ev_connected_timer    = 0;
     ev_pairing_flag       = false;
@@ -274,7 +272,7 @@ bool dip_switch_update_user(uint8_t index, bool active) {
         case 0:
             // dip switch is inactive in bt state
             if (!active) {
-                set_output(OUTPUT_NONE);
+                set_output(OUTPUT_BLUETOOTH);
                 iton_bt_init();
                 bt_profile_load();
             } else {
