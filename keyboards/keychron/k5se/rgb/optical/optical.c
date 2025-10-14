@@ -19,7 +19,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "keymap.h"
 #include <stdint.h>
 
-#ifdef BLUETOOTH_ENABLE
+#ifdef BLUETOOTH_ITON_BT
 #    include "iton_bt.h"
 #    include "outputselect.h"
 #    include "eeconfig.h"
@@ -30,14 +30,13 @@ static uint32_t startup_flash = STARTUP_FLASH_DURATION_MS;
 
 static uint32_t last_update_time = 0;
 
-#ifdef BLUETOOTH_ENABLE
+#ifdef BLUETOOTH_ITON_BT
 #    define BT_CONNECTION_SUCCESSFUL_DURATION_MS 2500
 #    define BT_DISCONNECTED_DURATION_MS 2500
 #    define BT_BATTERY_DURATION_MS 2500
 #    define BT_BATTERY_WAIT_QUERY_DURATION_MS 10000
 
 #    define BT_PROFILE_LED_START_INDEX 17
-#    define BATTERY_LED_INDEX 65
 
 #    define BT_PAIRING_BLINK_MS 250
 #    define BT_CONNECTING_BLINK_MS 250
@@ -64,7 +63,7 @@ const rgb_t BATTERY_COLOR_MAP[] = {
 };
 #endif
 
-#ifdef BLUETOOTH_ENABLE
+#ifdef BLUETOOTH_ITON_BT
 static bool     ev_connecting_flag     = false;
 static bool     ev_pairing_flag        = false;
 static uint32_t ev_disconnected_timer  = 0;
@@ -124,6 +123,7 @@ void iton_bt_enters_connection_state() {
 }
 
 void iton_bt_disconnected() {
+    set_output(OUTPUT_NONE);
     ev_disconnected_timer = BT_DISCONNECTED_DURATION_MS;
     ev_connected_timer    = 0;
     ev_pairing_flag       = false;
@@ -137,7 +137,8 @@ void iton_bt_battery_level(uint8_t level) {
 #endif
 
 bool process_record_kb(uint16_t keycode, keyrecord_t *record) {
-#ifdef BLUETOOTH_ENABLE
+
+#ifdef BLUETOOTH_ITON_BT
     if (record->event.pressed && bluetooth_dip_switch) {
         switch (keycode) {
             case BT_PROFILE1:
@@ -165,7 +166,9 @@ bool process_record_kb(uint16_t keycode, keyrecord_t *record) {
                 break;
         }
     }
+
 #endif
+
     switch (keycode) {
         case KC_MISSION_CONTROL:
             host_consumer_send(record->event.pressed ? 0x29F : 0);
@@ -205,18 +208,25 @@ bool rgb_matrix_indicators_advanced_user(uint8_t led_min, uint8_t led_max) {
 
                 if (index >= led_min && index < led_max && index != NO_LED) {
                 uint16_t keycode = keymap_key_to_keycode(layer, (keypos_t){col, row});
-
-                    if (keycode == KC_TRNS || ((keycode == BT_PROFILE1 || keycode == BT_PROFILE2 || keycode == BT_PROFILE3 || keycode == BT_PAIR || keycode == BT_RESET || keycode == BT_BATTERY) && !bluetooth_dip_switch)) {
-                        rgb_matrix_set_color(index, 0x01, 0x01, 0x01);
-                    } else {
-                        rgb_matrix_set_color(index, RGB_WHITE);
-                    }
+                    #ifdef BLUETOOTH_ITON_BT
+                        if (keycode == KC_TRNS || ((keycode == BT_PROFILE1 || keycode == BT_PROFILE2 || keycode == BT_PROFILE3 || keycode == BT_PAIR || keycode == BT_RESET || keycode == BT_BATTERY) && !bluetooth_dip_switch)) {
+                            rgb_matrix_set_color(index, 0x01, 0x01, 0x01);
+                        } else {
+                            rgb_matrix_set_color(index, RGB_WHITE);
+                        }
+                    #else
+                        if (keycode == KC_TRNS || keycode == BT_PROFILE1 || keycode == BT_PROFILE2 || keycode == BT_PROFILE3 || keycode == BT_PAIR || keycode == BT_RESET || keycode == BT_BATTERY) {
+                            rgb_matrix_set_color(index, 0x01, 0x01, 0x01);
+                        } else {
+                            rgb_matrix_set_color(index, 255, 255, 255);
+                        }
+                    #endif
                 }
             }
         }
     }
 
-#ifdef BLUETOOTH_ENABLE
+#ifdef BLUETOOTH_ITON_BT
     if (!bluetooth_dip_switch) {
         return true;
     }
@@ -242,7 +252,7 @@ bool rgb_matrix_indicators_advanced_user(uint8_t led_min, uint8_t led_max) {
 
     if (ev_battery_level_timer > 0) {
         rgb_t color = BATTERY_COLOR_MAP[battery_level];
-        rgb_matrix_set_color(BATTERY_LED_INDEX, color.r, color.g, color.b);
+        rgb_matrix_set_color_all(color.r, color.g, color.b);
 
         if (ev_battery_level_timer > elapsed) {
             ev_battery_level_timer -= elapsed;
@@ -260,7 +270,7 @@ bool dip_switch_update_user(uint8_t index, bool active) {
         case 1:
             layer_move(active ? MAC_BASE : WIN_BASE);
             return false;
-#ifdef BLUETOOTH_ENABLE
+#ifdef BLUETOOTH_ITON_BT
         case 0:
             // dip switch is inactive in bt state
             if (!active) {
@@ -268,8 +278,8 @@ bool dip_switch_update_user(uint8_t index, bool active) {
                 iton_bt_init();
                 bt_profile_load();
             } else {
-                set_output(OUTPUT_USB);
                 iton_bt_deinit();
+                set_output(OUTPUT_USB);
             }
             bluetooth_dip_switch = !active;
             return false;
@@ -278,14 +288,11 @@ bool dip_switch_update_user(uint8_t index, bool active) {
     return true;
 }
 
-#ifdef BLUETOOTH_ENABLE
-    // Keychron K3-specific. Without it keyboard spams Tab, ` and other keys in bluetooth mode.
-    void matrix_output_select_delay(void) {
-        waitInputPinDelay();
-        if (bluetooth_dip_switch) {
-            waitInputPinDelay();
-            waitInputPinDelay();
-            waitInputPinDelay();
-        }
-    }
-#endif
+
+// Keychron K5SE-specific. Without it keyboard spams Tab, ` and other keys.
+void matrix_output_select_delay(void) {
+    waitInputPinDelay();
+    waitInputPinDelay();
+    waitInputPinDelay();
+    waitInputPinDelay();
+}

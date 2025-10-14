@@ -1,0 +1,67 @@
+{
+    "manufacturer": "Keychron",
+    "url": "https://www.keychron.com/collections/keychron-k-series-keyboard/products/keychron-k3-wireless-mechanical-keyboard",
+    "maintainer": "macaholik",
+    "usb": {
+		"vid": "0x3434",
+		"device_version": "1.0.0"
+    },
+	"matrix_pins": {
+        "input_pressed_state": 1,
+        "cols": ["A8", "A9", "A10", "A11", "A12", "A13", "A14", "A15", "B0", "B1", "B2", "B3", "B4", "B5", "B6", "B7"],
+        "rows": ["C15", "D11", "D10", "D9", "D8", "D7"]
+    },
+    "diode_direction": "COL2ROW",
+	"features": {
+        "rgb_matrix": true,
+        "bootmagic": true,
+        "extrakey": true,
+        "nkro": false,
+        "dip_switch": true
+    },
+    "processor": "SN32F248BF",
+    "bootloader": "sn32-dfu",
+    "development_board": "sn32f240b_shared_matrix",
+	"indicators": {
+        "caps_lock": "D4",
+        "on_state": 1
+    },
+    "dip_switch": {
+        "pins": ["D5", "D6"]
+    },
+    "rgb_matrix": {
+        "driver": "sn32f2xx",
+        "animations": {
+            "solid_color": true,
+            "breathing": true,
+            "band_spiral_val": true,
+            "cycle_all": true,
+            "cycle_left_right": true,
+            "cycle_up_down": true,
+            "rainbow_moving_chevron": true,
+            "cycle_out_in": true,
+            "cycle_out_in_dual": true,
+            "cycle_pinwheel": true,
+            "cycle_spiral": true,
+            "dual_beacon": true,
+            "rainbow_beacon": true,
+            "jellybean_raindrops": true,
+            "pixel_rain": true,
+            "typing_heatmap": true,
+            "digital_rain": true,
+            "solid_reactive_simple": true,
+            "solid_reactive_multiwide": true,
+            "solid_reactive_multinexus": true,
+            "splash": true,
+            "solid_splash": true,
+            "riverflow": true
+        },
+		"default": {
+			"animation": "riverflow",
+			"hue": 0,
+			"sat": 255
+		},
+        "sleep": true,
+        "timeout": 30000
+    }
+}
