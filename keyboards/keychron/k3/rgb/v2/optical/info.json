@@ -14,10 +14,12 @@
     "diode_direction": "COL2ROW",
 	"features": {
         "rgb_matrix": true,
-        "bootmagic": true,
+        "dip_switch": true,
         "extrakey": true,
-        "nkro": false,
-        "dip_switch": true
+        "command": false,
+        "console": false,
+        "bootmagic": false,
+        "nkro": false
     },
     "processor": "SN32F248BF",
     "bootloader": "sn32-dfu",
@@ -58,8 +60,9 @@
         },
 		"default": {
 			"animation": "riverflow",
-			"hue": 0,
-			"sat": 255
+			"hue": 176,
+			"sat": 255,
+            "val": 255
 		},
         "sleep": true,
         "timeout": 30000
