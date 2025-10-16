@@ -136,6 +136,37 @@ void iton_bt_battery_level(uint8_t level) {
 
 bool process_record_kb(uint16_t keycode, keyrecord_t *record) {
 
+#ifdef BLUETOOTH_ITON_BT
+    if (record->event.pressed && bluetooth_dip_switch) {
+        switch (keycode) {
+            case BT_PROFILE1:
+            case BT_PROFILE2:
+            case BT_PROFILE3:
+                {
+                    bt_profile_save();
+                    uint8_t profile_idx = keycode - BT_PROFILE1;
+                    bt_profile = profile_idx;
+                    bt_profile_save();
+                    iton_bt_switch_profile(profile_idx);
+                }
+                return false;
+            case BT_PAIR:
+                iton_bt_enter_pairing();
+                return false;
+            case BT_RESET:
+                iton_bt_reset_pairing();
+                return false;
+            case BT_BATTERY:
+                ev_battery_level_timer = BT_BATTERY_WAIT_QUERY_DURATION_MS;
+                iton_bt_query_battery_level();
+                return false;
+            default:
+                break;
+        }
+    }
+
+#endif
+
     switch (keycode) {
         case KC_LOPTN:
             if (record->event.pressed) {
@@ -177,6 +208,27 @@ bool process_record_kb(uint16_t keycode, keyrecord_t *record) {
                 register_code(KC_LAUNCHPAD);
             } else {
                 unregister_code(KC_LAUNCHPAD);
+            }
+            return false;
+        case KC_SPOT:
+            if (record->event.pressed) {
+                host_consumer_send(0x221);
+            } else {
+                host_consumer_send(0x0);
+            }
+            return false;
+        case KC_DICT:
+            if (record->event.pressed) {
+                host_consumer_send(0xCF);
+            } else {
+                host_consumer_send(0x0);
+            }
+            return false;
+        case KC_DNDB:
+            if (record->event.pressed) {
+                host_system_send(0x9B);
+            } else {
+                host_system_send(0);
             }
             return false;
         case KC_MSCR:
@@ -223,37 +275,6 @@ bool process_record_kb(uint16_t keycode, keyrecord_t *record) {
             break;
     }
     return process_record_user(keycode, record);
-
-#ifdef BLUETOOTH_ITON_BT
-    if (record->event.pressed && bluetooth_dip_switch) {
-        switch (keycode) {
-            case BT_PROFILE1:
-            case BT_PROFILE2:
-            case BT_PROFILE3:
-                {
-                    bt_profile_save();
-                    uint8_t profile_idx = keycode - BT_PROFILE1;
-                    bt_profile = profile_idx;
-                    bt_profile_save();
-                    iton_bt_switch_profile(profile_idx);
-                }
-                return false;
-            case BT_PAIR:
-                iton_bt_enter_pairing();
-                return false;
-            case BT_RESET:
-                iton_bt_reset_pairing();
-                return false;
-            case BT_BATTERY:
-                ev_battery_level_timer = BT_BATTERY_WAIT_QUERY_DURATION_MS;
-                iton_bt_query_battery_level();
-                return false;
-            default:
-                break;
-        }
-    }
-
-#endif
 
 }
 
