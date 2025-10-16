@@ -169,16 +169,114 @@ bool process_record_kb(uint16_t keycode, keyrecord_t *record) {
 #endif
 
     switch (keycode) {
-        case KC_MISSION_CONTROL:
-            host_consumer_send(record->event.pressed ? 0x29F : 0);
+        case KC_LOPTN:
+            if (record->event.pressed) {
+                register_code(KC_LOPT);
+            } else {
+                unregister_code(KC_LOPT);
+            }
             return false;
-        case KC_LAUNCHPAD:
-            host_consumer_send(record->event.pressed ? 0x2A0 : 0);
+        case KC_ROPTN:
+            if (record->event.pressed) {
+                register_code(KC_ROPT);
+            } else {
+                unregister_code(KC_ROPT);
+            }
+            return false;
+        case KC_LCMMD:
+            if (record->event.pressed) {
+                register_code(KC_LCMD);
+            } else {
+                unregister_code(KC_LCMD);
+            }
+            return false;
+        case KC_RCMMD:
+            if (record->event.pressed) {
+                register_code(KC_RCMD);
+            } else {
+                unregister_code(KC_RCMD);
+            }
+            return false;
+        case KC_MISC:
+            if (record->event.pressed) {
+                register_code(KC_MISSION_CONTROL);
+            } else {
+                unregister_code(KC_MISSION_CONTROL);
+            }
+            return false;
+        case KC_LAUN:
+            if (record->event.pressed) {
+                register_code(KC_LAUNCHPAD);
+            } else {
+                unregister_code(KC_LAUNCHPAD);
+            }
+            return false;
+        case KC_SPOT:
+            if (record->event.pressed) {
+                host_consumer_send(0x221);
+            } else {
+                host_consumer_send(0x0);
+            }
+            return false;
+        case KC_DICT:
+            if (record->event.pressed) {
+                host_consumer_send(0xCF);
+            } else {
+                host_consumer_send(0x0);
+            }
+            return false;
+        case KC_DNDB:
+            if (record->event.pressed) {
+                host_system_send(0x9B);
+            } else {
+                host_system_send(0);
+            }
+            return false;
+        case KC_MSCR:
+            if (record->event.pressed) {
+                register_code(KC_LSFT);
+                register_code(KC_LCMD);
+                register_code(KC_5);
+            } else {
+                unregister_code(KC_LSFT);
+                unregister_code(KC_LCMD);
+                unregister_code(KC_5);
+            }
+            return false;
+        case KC_TASK:
+            if (record->event.pressed) {
+                register_code(KC_LWIN);
+                register_code(KC_TAB);
+            } else {
+                unregister_code(KC_LWIN);
+                unregister_code(KC_TAB);
+            }
+            return false;
+        case KC_FLXP:
+            if (record->event.pressed) {
+                register_code(KC_LWIN);
+                register_code(KC_E);
+            } else {
+                unregister_code(KC_LWIN);
+                unregister_code(KC_E);
+            }
+            return false;
+        case KC_SNIP:
+            if (record->event.pressed) {
+                register_code(KC_LSFT);
+                register_code(KC_LWIN);
+                register_code(KC_S);
+            } else {
+                unregister_code(KC_LSFT);
+                unregister_code(KC_LWIN);
+                unregister_code(KC_S);
+            }
             return false;
         default:
             break;
     }
     return process_record_user(keycode, record);
+
 }
 
 bool rgb_matrix_indicators_advanced_user(uint8_t led_min, uint8_t led_max) {
