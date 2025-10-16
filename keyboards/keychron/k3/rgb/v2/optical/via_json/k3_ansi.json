@@ -77,21 +77,21 @@
         }
     ],
     "customKeycodes": [
-        {"name": "Left Option", "title": "Left Option", "shortName": "Left Opt"},
-        {"name": "Right Option", "title": "Right Option", "shortName": "ROpt"},
-        {"name": "Left Cmd", "title": "Left Command", "shortName": "Left Cmd"},
-        {"name": "Right Cmd", "title": "Right Command", "shortName": "RCmd"},
-        {"name": "Mission Control", "title": "Mission Control in macOS", "shortName": "MCtl"},
-        {"name": "Launchpad", "title": "Launchpad in macOS", "shortName": "LPad"},
-        {"name": "macOS Screenshot", "title": "Screenshot in macOS", "shortName": "MScr"},
-        {"name": "Task Viewer", "title": "Task Viewer in Windows", "shortName": "Task"},
-        {"name": "File Explorer", "title": "File Explorer in Windows", "shortName": "File"},
-        {"name": "Windows Screenshot", "title": "Screenshot in Windows", "shortName": "WScr"},
-        {"name": "Bluetooth Profile 1", "title": "Bluetooth Profile 1", "shortName": "BT 1"},
-        {"name": "Bluetooth Profile 2", "title": "Bluetooth Profile 2", "shortName": "BT 2"},
-        {"name": "Bluetooth Profile 3", "title": "Bluetooth Profile 3", "shortName": "BT 3"},
+        {"name": "Left Option", "title": "Left Option (macOS)", "shortName": "Left Opt"},
+        {"name": "Right Option", "title": "Right Option (macOS)", "shortName": "ROpt"},
+        {"name": "Left Cmd", "title": "Left Command (macOS)", "shortName": "Left Cmd"},
+        {"name": "Right Cmd", "title": "Right Command (macOS)", "shortName": "RCmd"},
+        {"name": "Mission Control", "title": "Open Mission Control in macOS", "shortName": "MisC"},
+        {"name": "Launch pad", "title": "Open Launchpad in macOS", "shortName": "Laun"},
+        {"name": "macOS SS", "title": "Make a screenshot in macOS", "shortName": "MScr"},
+        {"name": "Task Viewer", "title": "Open Task Viewer in Windows", "shortName": "Task"},
+        {"name": "File Expl.", "title": "Open File Explorer in Windows", "shortName": "File"},
+        {"name": "Wind. SS", "title": "Make a screenshot in Windows", "shortName": "WScr"},
+        {"name": "BT Prof. 1", "title": "Switch to Bluetooth profile 1", "shortName": "BT 1"},
+        {"name": "BT Prof. 2", "title": "Switch to Bluetooth profile 2", "shortName": "BT 2"},
+        {"name": "BT Prof. 3", "title": "Switch to Bluetooth profile 3", "shortName": "BT 3"},
         {"name": "Battery Level", "title": "Show battery level", "shortName": "Batt"},
-        {"name": "Bluetooth Pair", "title": "Pair Bluetooth device", "shortName": "Pair"},
-        {"name": "Reset Bluetooth", "title": "Reset bluetooth pairing", "shortName": "Res"}
+        {"name": "BT Pairing", "title": "Pair Bluetooth device", "shortName": "Pair"},
+        {"name": "Reset BT", "title": "Reset Bluetooth paired devices", "shortName": "Reset"}
     ]
 }
