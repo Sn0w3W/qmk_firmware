@@ -28,6 +28,7 @@
     "rgb_matrix": {
         "driver": "sn32f2xx",
         "animations": {
+            "solid_color": true,
             "breathing": true,
             "band_spiral_val": true,
             "cycle_all": true,
@@ -48,13 +49,15 @@
             "solid_reactive_multiwide": true,
             "solid_reactive_multinexus": true,
             "splash": true,
-            "solid_splash": true
+            "solid_splash": true,
+            "riverflow": true
         },
-        "default": {
-            "animation": "solid_color",
-            "hue": 0,
-            "sat": 255
-        },
+		"default": {
+			"animation": "riverflow",
+			"hue": 176,
+			"sat": 255,
+            "val": 255
+		},
         "sleep": true,
         "timeout": 30000
     }

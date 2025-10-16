@@ -1,5 +1,5 @@
 /*
-Copyright 2025 Sn0w3W
+Copyright 2024 mintyleaf
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -16,14 +16,26 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 #include QMK_KEYBOARD_H
 
-enum BT_keycodes {
-    BT_PROFILE1 = SAFE_RANGE,
+enum custom_keycodes {
+    KC_LOPTN = QK_KB_0,
+    KC_ROPTN,
+    KC_LCMMD,
+    KC_RCMMD,
+    KC_MISC,
+    KC_LAUN,
+    KC_SPOT,
+    KC_DICT,
+    KC_DNDB,
+    KC_MSCR,
+    KC_TASK,
+    KC_FLXP,
+    KC_SNIP,
+    BT_PROFILE1,
     BT_PROFILE2,
     BT_PROFILE3,
+    BT_BATTERY,
     BT_PAIR,
-    BT_TOGGLE,
-    BT_RESET,
-    BT_BATTERY
+    BT_RESET
 };
 
 // Each layer gets a name for readability, which is then used in the keymap matrix below.
@@ -37,10 +49,8 @@ enum layer_names {
   WIN_FN
 };
 
-#define KC_MCTL KC_MISSION_CONTROL  // Mission Control
-#define KC_LPAD KC_LAUNCHPAD        // Launchpad
-#define KC_MSNP SGUI(KC_5)          // Mac screenshot
-
-#define KC_TASK LGUI(KC_TAB)        // Task viewer
-#define KC_FLXP LGUI(KC_E)          // Windows file explorer
-#define KC_SNIP LGUI(LSFT(KC_S))    // Windows snip tool
+#define BT_PRF1 BT_PROFILE1          // Bluetooth Profile 1
+#define BT_PRF2 BT_PROFILE2          // Bluetooth Profile 2
+#define BT_PRF3 BT_PROFILE3          // Bluetooth Profile 3
+#define BT_BATT BT_BATTERY           // Bluetooth Battery Level
+#define BT_RESS BT_RESET             // Bluetooth Reset
