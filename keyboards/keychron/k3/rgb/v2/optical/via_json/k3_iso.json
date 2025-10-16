@@ -75,5 +75,23 @@
                 }
             ]
         }
+    ],
+    "customKeycodes": [
+        {"name": "Left Option", "title": "Left Option", "shortName": "Left Opt"},
+        {"name": "Right Option", "title": "Right Option", "shortName": "ROpt"},
+        {"name": "Left Cmd", "title": "Left Command", "shortName": "Left Cmd"},
+        {"name": "Right Cmd", "title": "Right Command", "shortName": "RCmd"},
+        {"name": "Mission Control", "title": "Mission Control in macOS", "shortName": "MCtl"},
+        {"name": "Launchpad", "title": "Launchpad in macOS", "shortName": "LPad"},
+        {"name": "macOS Screenshot", "title": "Screenshot in macOS", "shortName": "MScr"},
+        {"name": "Task Viewer", "title": "Task Viewer in Windows", "shortName": "Task"},
+        {"name": "File Explorer", "title": "File Explorer in Windows", "shortName": "File"},
+        {"name": "Windows Screenshot", "title": "Screenshot in Windows", "shortName": "WScr"},
+        {"name": "Bluetooth Profile 1", "title": "Bluetooth Profile 1", "shortName": "BT 1"},
+        {"name": "Bluetooth Profile 2", "title": "Bluetooth Profile 2", "shortName": "BT 2"},
+        {"name": "Bluetooth Profile 3", "title": "Bluetooth Profile 3", "shortName": "BT 3"},
+        {"name": "Battery Level", "title": "Show battery level", "shortName": "Batt"},
+        {"name": "Bluetooth Pair", "title": "Pair Bluetooth device", "shortName": "Pair"},
+        {"name": "Reset Bluetooth", "title": "Reset bluetooth pairing", "shortName": "Res"}
     ]
 }
