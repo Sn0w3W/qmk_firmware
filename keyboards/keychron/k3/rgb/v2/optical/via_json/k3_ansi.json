@@ -14,5 +14,66 @@
             [{"w":1.25},"5,0",{"w":1.25},"5,1",{"w":1.25},"5,2",{"w":6.25},"5,6","5,10","5,11","5,12","5,13","5,14","5,15"]
         ]
     },
-	"menus": [ "qmk_rgb_matrix"]
+	"menus": [
+        {
+        "label": "Lighting",
+            "content": [
+                {
+                    "label": "Backlight",
+                    "content": [
+                        {
+                            "label": "Brightness",
+                            "type": "range",
+                            "options": [0, 255],
+                            "content": ["id_qmk_rgb_matrix_brightness", 3, 1]
+                        },
+                        {
+                            "label": "Effect",
+                            "type": "dropdown",
+                            "content": ["id_qmk_rgb_matrix_effect", 3, 2],
+                            "options": [
+                                "All Off",
+                                "Solid Color",
+                                "Breathing",
+                                "Spiral Val.",
+                                "Cycle All",
+                                "Cycle Left/Right",
+                                "Cycle Up/Down",
+                                "Rainbow Moving Chevron",
+                                "Cycle Out/In",
+                                "Cycle Out/In Dual",
+                                "Cycle Pinwheel",
+                                "Cycle Spiral",
+                                "Dual Beacon",
+                                "Rainbow Beacon",
+                                "Jellybean Raindrops",
+                                "Pixel Rain",
+                                "Typing Heatmap",
+                                "Digital Rain",
+                                "Solid Reactive Simple",
+                                "Solid Reactive Multi Wide",
+                                "Solid Reactive Multi Nexus",
+                                "Splash",
+                                "Solid Splash",
+                                "Riverflow"
+                            ]
+                        },
+                        {
+                            "showIf": "{id_qmk_rgb_matrix_effect} != 0",
+                            "label": "Effect Speed",
+                            "type": "range",
+                            "options": [0, 255],
+                            "content": ["id_qmk_rgb_matrix_effect_speed", 3, 3]
+                        },
+                        {
+                            "showIf": "{id_qmk_rgb_matrix_effect} != 0 && {id_qmk_rgb_matrix_effect} != 24 && {id_qmk_rgb_matrix_effect} != 28 && {id_qmk_rgb_matrix_effect} != 29 && {id_qmk_rgb_matrix_effect} != 32",
+                            "label": "Color",
+                            "type": "color",
+                            "content": ["id_qmk_rgb_matrix_color", 3, 4]
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
 }
