@@ -1,18 +1,18 @@
-# Keychron K3V2 RGB Optical ANSI
+# Keychron K3V2 RGB Optical ISO
 
 *A 75% keyboard sold by keychron*
 
 * Keyboard Maintainer: [Sn0w3W](https://github.com/Sn0w3W/) (based on work of Swiftb0y on ISO version)
-* Hardware Supported: *Keychron K3V2 ANSI RGB, MCU: SN32F248BF*
+* Hardware Supported: *Keychron K3V2 ISO RGB, MCU: SN32F248BF*
 * Hardware Availability: *https://www.keychron.com/collections/keychron-k-series-keyboard/products/keychron-k3-wireless-mechanical-keyboard*
 
 Compile example for this keyboard (after setting up your build environment):
 
-    qmk compile -kb keychron/k3/rgb/v2bl/iso -km default
+    qmk compile -kb keychron/k3/rgb/v2/optical/iso -km default
 
 Compile example for this keyboard with VIA (after setting up your build environment):
 
-    qmk compile -kb keychron/k3/rgb/v2bl/iso -km via
+    qmk compile -kb keychron/k3/rgb/v2/optical/iso -km via
 
 This keyboard must be flashed with an external [GUI](https://github.com/SonixQMK/sonix-flasher) or [CLI](https://github.com/SonixQMK/SonixFlasherC)
 

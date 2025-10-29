@@ -2,7 +2,7 @@
 
 Warning- This is the `develop` branch of QMK Firmware. You may encounter broken code here. Please see [Breaking Changes](https://docs.qmk.fm/#/breaking_changes) for more information.
 
-# Quantum Mechanical Keyboard Firmware
+# Quantum Mechanical Keyboard Firmware (for K3 and K5SE optical versions)
 
 [![Current Version](https://img.shields.io/github/tag/qmk/qmk_firmware.svg)](https://github.com/qmk/qmk_firmware/tags)
 [![Discord](https://img.shields.io/discord/440868230475677696.svg)](https://discord.gg/qmk)

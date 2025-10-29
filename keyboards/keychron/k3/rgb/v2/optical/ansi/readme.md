@@ -8,11 +8,11 @@
 
 Compile example for this keyboard (after setting up your build environment):
 
-    qmk compile -kb keychron/k3/rgb/v2bl/ansi -km default
+    qmk compile -kb keychron/k3/rgb/v2/optical/ansi -km default
 
 Compile example for this keyboard with VIA (after setting up your build environment):
 
-    qmk compile -kb keychron/k3/rgb/v2bl/ansi -km via
+    qmk compile -kb keychron/k3/rgb/v2/optical/ansi -km via
 
 This keyboard must be flashed with an external [GUI](https://github.com/SonixQMK/sonix-flasher) or [CLI](https://github.com/SonixQMK/SonixFlasherC)
 
