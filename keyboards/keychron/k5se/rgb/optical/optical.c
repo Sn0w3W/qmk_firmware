@@ -71,6 +71,7 @@ static uint32_t ev_battery_level_timer = 0;
 static uint32_t battery_level          = 0;
 static uint32_t bt_profile             = 0;
 static uint32_t bt_prof_index          = 0;
+static uint32_t bt_batt_index          = 0;
 static uint32_t bt_prof1_index         = 0;
 static uint32_t bt_prof2_index         = 0;
 static uint32_t bt_prof3_index         = 0;
@@ -314,6 +315,10 @@ bool rgb_matrix_indicators_advanced_user(uint8_t led_min, uint8_t led_max) {
         return true;
     }
 
+    hsv_t hsv_color = (hsv_t)rgb_matrix_config.hsv;
+    hsv_color.v = 255;
+    rgb_t color = hsv_to_rgb(hsv_color);
+
     uint8_t layer = get_highest_layer(layer_state);
         if (layer == 0 || layer == 2) {
         #ifdef BLUETOOTH_ITON_BT
@@ -329,7 +334,10 @@ bool rgb_matrix_indicators_advanced_user(uint8_t led_min, uint8_t led_max) {
                             bt_prof2_index = index;
                         } else if (keycode == BT_PROFILE3) {
                             bt_prof3_index = index;
+                        } else if (keycode == BT_BATTERY) {
+                            bt_batt_index = index;
                         }
+
                         if (bt_profile == 0) {
                             bt_prof_index = bt_prof1_index;
                         } else if (bt_profile == 1) {
@@ -352,13 +360,13 @@ bool rgb_matrix_indicators_advanced_user(uint8_t led_min, uint8_t led_max) {
                         if (keycode == KC_TRNS || keycode == KC_NO || ((keycode == BT_PROFILE1 || keycode == BT_PROFILE2 || keycode == BT_PROFILE3 || keycode == BT_PAIR || keycode == BT_RESET || keycode == BT_BATTERY) && !bluetooth_dip_switch)) {
                             rgb_matrix_set_color(index, 0x01, 0x01, 0x01);
                         } else {
-                            rgb_matrix_set_color(index, RGB_WHITE);
+                            rgb_matrix_set_color(index, color.r, color.g, color.b);
                         }
                     #else
                         if (keycode == KC_TRNS || keycode == KC_NO || keycode == BT_PROFILE1 || keycode == BT_PROFILE2 || keycode == BT_PROFILE3 || keycode == BT_PAIR || keycode == BT_RESET || keycode == BT_BATTERY) {
                             rgb_matrix_set_color(index, 0x01, 0x01, 0x01);
                         } else {
-                            rgb_matrix_set_color(index, RGB_WHITE);
+                            rgb_matrix_set_color(index, color.r, color.g, color.b);
                         }
                     #endif
                 }
@@ -417,7 +425,7 @@ bool rgb_matrix_indicators_advanced_user(uint8_t led_min, uint8_t led_max) {
 
     if (ev_battery_level_timer > 0) {
         rgb_t color = BATTERY_COLOR_MAP[battery_level];
-        rgb_matrix_set_color_all(color.r, color.g, color.b);
+        rgb_matrix_set_color(bt_batt_index, color.r, color.g, color.b);
 
         if (ev_battery_level_timer > elapsed) {
             ev_battery_level_timer -= elapsed;
