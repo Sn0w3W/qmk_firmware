@@ -348,13 +348,13 @@ bool rgb_matrix_indicators_advanced_user(uint8_t led_min, uint8_t led_max) {
                 if (index >= led_min && index < led_max && index != NO_LED) {
                 uint16_t keycode = keymap_key_to_keycode(layer, (keypos_t){col, row});
                     #ifdef BLUETOOTH_ITON_BT
-                        if (keycode == KC_TRNS || ((keycode == BT_PROFILE1 || keycode == BT_PROFILE2 || keycode == BT_PROFILE3 || keycode == BT_PAIR || keycode == BT_RESET || keycode == BT_BATTERY) && !bluetooth_dip_switch)) {
+                        if (keycode == KC_TRNS || keycode == KC_NO || ((keycode == BT_PROFILE1 || keycode == BT_PROFILE2 || keycode == BT_PROFILE3 || keycode == BT_PAIR || keycode == BT_RESET || keycode == BT_BATTERY) && !bluetooth_dip_switch)) {
                             rgb_matrix_set_color(index, 0x01, 0x01, 0x01);
                         } else {
                             rgb_matrix_set_color(index, RGB_WHITE);
                         }
                     #else
-                        if (keycode == KC_TRNS || keycode == BT_PROFILE1 || keycode == BT_PROFILE2 || keycode == BT_PROFILE3 || keycode == BT_PAIR || keycode == BT_RESET || keycode == BT_BATTERY) {
+                        if (keycode == KC_TRNS || keycode == KC_NO || keycode == BT_PROFILE1 || keycode == BT_PROFILE2 || keycode == BT_PROFILE3 || keycode == BT_PAIR || keycode == BT_RESET || keycode == BT_BATTERY) {
                             rgb_matrix_set_color(index, 0x01, 0x01, 0x01);
                         } else {
                             rgb_matrix_set_color(index, RGB_WHITE);
