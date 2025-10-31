@@ -301,7 +301,7 @@ bool rgb_matrix_indicators_advanced_user(uint8_t led_min, uint8_t led_max) {
     last_update_time      = current_time;
 
     if (startup_flash > 0) {
-        hsv_t flash     = (hsv_t){HSV_WHITE};
+        hsv_t flash     = (hsv_t)rgb_matrix_config.hsv;
         flash.v         = (uint8_t)((startup_flash * 255UL) / STARTUP_FLASH_DURATION_MS);
         rgb_t flash_rgb = hsv_to_rgb(flash);
         rgb_matrix_set_color_all(flash_rgb.r, flash_rgb.g, flash_rgb.b);
