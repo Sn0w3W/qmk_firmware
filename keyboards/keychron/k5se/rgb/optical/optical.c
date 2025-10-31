@@ -36,8 +36,6 @@ static uint32_t last_update_time = 0;
 #    define BT_BATTERY_DURATION_MS 2500
 #    define BT_BATTERY_WAIT_QUERY_DURATION_MS 10000
 
-#    define BT_PROFILE_LED_START_INDEX 21
-
 #    define BT_PAIRING_BLINK_MS 250
 #    define BT_CONNECTING_BLINK_MS 250
 #    define BT_DISCONNECTED_BLINK_MS 250
@@ -70,9 +68,13 @@ static uint32_t ev_disconnected_timer  = 0;
 static uint32_t ev_connected_timer     = 0;
 static uint32_t ev_battery_level_timer = 0;
 
-static uint32_t battery_level = 0;
-static uint32_t bt_profile    = 0;
-static uint8_t  mac_switch  = 0;
+static uint32_t battery_level          = 0;
+static uint32_t bt_profile             = 0;
+static uint32_t bt_prof_index          = 0;
+static uint32_t bt_prof1_index         = 0;
+static uint32_t bt_prof2_index         = 0;
+static uint32_t bt_prof3_index         = 0;
+static uint8_t  mac_switch             = 0;
 
 static bool bluetooth_dip_switch = false;
 
@@ -96,11 +98,10 @@ static inline void bt_profile_load(void) {
 }
 
 static void set_profile_led_blinking(uint32_t current_time, uint32_t blink_ms, uint8_t r, uint8_t g, uint8_t b) {
-    uint8_t profile_index = BT_PROFILE_LED_START_INDEX + bt_profile;
     if ((current_time / blink_ms) % 2 == 0) {
-        rgb_matrix_set_color(profile_index, r, g, b);
+        rgb_matrix_set_color(bt_prof_index, r, g, b);
     } else {
-        rgb_matrix_set_color(profile_index, 0, 0, 0);
+        rgb_matrix_set_color(bt_prof_index, 0, 0, 0);
     }
 }
 
@@ -141,12 +142,28 @@ bool process_record_kb(uint16_t keycode, keyrecord_t *record) {
     if (record->event.pressed && bluetooth_dip_switch) {
         switch (keycode) {
             case BT_PROFILE1:
+                {
+                    uint8_t profile_idx = 0;
+                    bt_profile = profile_idx;
+                    bt_prof_index = bt_prof1_index;
+                    bt_profile_save();
+                    iton_bt_switch_profile(profile_idx);
+                }
+                return false;
             case BT_PROFILE2:
+                {
+                    uint8_t profile_idx = 1;
+                    bt_profile = profile_idx;
+                    bt_prof_index = bt_prof2_index;
+                    bt_profile_save();
+                    iton_bt_switch_profile(profile_idx);
+                }
+                return false;
             case BT_PROFILE3:
                 {
-                    bt_profile_save();
-                    uint8_t profile_idx = keycode - BT_PROFILE1;
+                    uint8_t profile_idx = 2;
                     bt_profile = profile_idx;
+                    bt_prof_index = bt_prof3_index;
                     bt_profile_save();
                     iton_bt_switch_profile(profile_idx);
                 }
@@ -298,7 +315,33 @@ bool rgb_matrix_indicators_advanced_user(uint8_t led_min, uint8_t led_max) {
     }
 
     uint8_t layer = get_highest_layer(layer_state);
-    if (layer != 0 && layer != 2) {
+        if (layer == 0 || layer == 2) {
+        #ifdef BLUETOOTH_ITON_BT
+            for (uint8_t row = 0; row < MATRIX_ROWS; ++row) {
+                for (uint8_t col = 0; col < MATRIX_COLS; ++col) {
+                    uint8_t index = g_led_config.matrix_co[row][col];
+
+                    if (index >= led_min && index < led_max && index != NO_LED) {
+                    uint16_t keycode = keymap_key_to_keycode(layer + 1, (keypos_t){col, row});
+                        if (keycode == BT_PROFILE1) {
+                            bt_prof1_index = index;
+                        } else if (keycode == BT_PROFILE2) {
+                            bt_prof2_index = index;
+                        } else if (keycode == BT_PROFILE3) {
+                            bt_prof3_index = index;
+                        }
+                        if (bt_profile == 0) {
+                            bt_prof_index = bt_prof1_index;
+                        } else if (bt_profile == 1) {
+                            bt_prof_index = bt_prof2_index;
+                        } else if (bt_profile == 2) {
+                            bt_prof_index = bt_prof3_index;
+                        }
+                    }
+                }
+            }
+        #endif
+    } else if (layer != 0 && layer != 2) {
         for (uint8_t row = 0; row < MATRIX_ROWS; ++row) {
             for (uint8_t col = 0; col < MATRIX_COLS; ++col) {
                 uint8_t index = g_led_config.matrix_co[row][col];
@@ -315,7 +358,7 @@ bool rgb_matrix_indicators_advanced_user(uint8_t led_min, uint8_t led_max) {
                         if (keycode == KC_TRNS || keycode == KC_NO || keycode == BT_PROFILE1 || keycode == BT_PROFILE2 || keycode == BT_PROFILE3 || keycode == BT_PAIR || keycode == BT_RESET || keycode == BT_BATTERY) {
                             rgb_matrix_set_color(index, 0x01, 0x01, 0x01);
                         } else {
-                            rgb_matrix_set_color(index, 255, 255, 255);
+                            rgb_matrix_set_color(index, RGB_WHITE);
                         }
                     #endif
                 }
@@ -358,7 +401,7 @@ bool rgb_matrix_indicators_advanced_user(uint8_t led_min, uint8_t led_max) {
     } else if (ev_connecting_flag) {
         set_profile_led_blinking(current_time, BT_CONNECTING_BLINK_MS, RGB_BLUE);
     } else if (ev_connected_timer > 0) {
-        rgb_matrix_set_color(BT_PROFILE_LED_START_INDEX + bt_profile, RGB_WHITE);
+        rgb_matrix_set_color(bt_prof_index, RGB_WHITE);
     } else if (ev_disconnected_timer > 0) {
         set_profile_led_blinking(current_time, BT_DISCONNECTED_BLINK_MS, RGB_RED);
     }
