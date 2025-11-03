@@ -41,22 +41,13 @@
             "cycle_spiral": true,
             "dual_beacon": true,
             "rainbow_beacon": true,
-            // "jellybean_raindrops": true,
-            // "pixel_rain": true,
-            // "typing_heatmap": true,
-            // "digital_rain": true,
-            // "solid_reactive_simple": true,
-            // "solid_reactive_multiwide": true,
-            // "solid_reactive_multinexus": true,
-            // "splash": true,
-            // "solid_splash": true,
-            // "riverflow": true
+            "riverflow": true
         },
 		"default": {
-			"animation": "solid_color",
-			"hue": 176,
-			"sat": 255,
-            "val": 255
+			"animation": "riverflow",
+			"hue": 24,   // Step: 8
+			"sat": 204,  // Step: 17
+            "val": 255   // Step: 17
 		},
         "sleep": true,
         "timeout": 30000

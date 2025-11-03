@@ -1,5 +1,5 @@
 /*
-Copyright 2025 mintyleaf
+Copyright 2025 Sn0w3W
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -15,175 +15,188 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include "quantum.h"
 #include "keymap.h"
-#include <stdint.h>
 
 #ifdef BLUETOOTH_ITON_BT
-#    include "iton_bt.h"
-#    include "outputselect.h"
-#    include "eeconfig.h"
-#endif
-
-#define STARTUP_FLASH_DURATION_MS 1500
-static uint32_t startup_flash = STARTUP_FLASH_DURATION_MS;
-
-static uint32_t last_update_time = 0;
-
-#ifdef BLUETOOTH_ITON_BT
-#    define BT_CONNECTION_SUCCESSFUL_DURATION_MS 2500
-#    define BT_DISCONNECTED_DURATION_MS 2500
-#    define BT_BATTERY_DURATION_MS 2500
-#    define BT_BATTERY_WAIT_QUERY_DURATION_MS 10000
-
-#    define BT_PAIRING_BLINK_MS 250
-#    define BT_CONNECTING_BLINK_MS 250
-#    define BT_DISCONNECTED_BLINK_MS 250
-#    define KB_BT_PROFILE_MASK  (0x3u << 0)
-#    define KB_BT_PROFILE_SHIFT 0
-
-#    define NUM_BATTERY_LEVELS (sizeof(BATTERY_COLOR_MAP) / sizeof(BATTERY_COLOR_MAP[0]))
-
-typedef enum {
-    BATTERY_LEVEL_NONE = 0,
-    BATTERY_LEVEL_CRITICAL = 1,
-    BATTERY_LEVEL_LOW = 2,
-    BATTERY_LEVEL_MEDIUM = 3,
-    BATTERY_LEVEL_FULL = 4
-} battery_level_t;
-
-const rgb_t BATTERY_COLOR_MAP[] = {
-    {RGB_WHITE},
-    {RGB_RED},
-    {RGB_ORANGE},
-    {RGB_YELLOW},
-    {RGB_GREEN}
-};
+    #include "iton_bt.h"
+    #include "outputselect.h"
 #endif
 
 #ifdef BLUETOOTH_ITON_BT
-static bool     ev_connecting_flag     = false;
-static bool     ev_pairing_flag        = false;
-static uint32_t ev_disconnected_timer  = 0;
-static uint32_t ev_connected_timer     = 0;
-static uint32_t ev_battery_level_timer = 0;
+    #define BT_CONNECTION_SUCCESSFUL_DURATION_MS 2500
+    #define BT_DISCONNECTED_DURATION_MS 2500
+    #define BT_BATTERY_DURATION_MS 2500
+    #define BT_BATTERY_WAIT_QUERY_DURATION_MS 10000
 
-static uint32_t battery_level          = 0;
-static uint32_t bt_profile             = 0;
-static uint32_t bt_prof_index          = 0;
-static uint32_t bt_batt_index          = 0;
-static uint32_t bt_prof1_index         = 0;
-static uint32_t bt_prof2_index         = 0;
-static uint32_t bt_prof3_index         = 0;
+    #define KB_BT_PROFILE_MASK  (0x3u << 0)
+    #define KB_BT_PROFILE_SHIFT 0
 
-static bool bluetooth_dip_switch = false;
+    #define NUM_BATTERY_LEVELS (sizeof(BATTERY_COLOR_MAP) / sizeof(BATTERY_COLOR_MAP[0]))
 
-static inline void bt_profile_save(void) {
-    if (!eeconfig_is_enabled()) {
-        eeconfig_init();
+    typedef enum {
+        BATTERY_LEVEL_NONE = 0,
+        BATTERY_LEVEL_CRITICAL = 1,
+        BATTERY_LEVEL_LOW = 2,
+        BATTERY_LEVEL_MEDIUM = 3,
+        BATTERY_LEVEL_FULL = 4
+    } battery_level_t;
+
+    const rgb_t BATTERY_COLOR_MAP[] = {
+        {RGB_WHITE},
+        {RGB_RED},
+        {RGB_ORANGE},
+        {RGB_YELLOW},
+        {RGB_GREEN}
+    };
+
+    static struct {
+        uint8_t connecting : 1;
+        uint8_t pairing    : 1;
+        uint8_t dip_switch : 1;
+    } flags = {0};
+
+    static uint16_t last_update_time = 0;
+    static uint16_t ev_disconnected_timer  = 0;
+    static uint16_t ev_connected_timer     = 0;
+    static uint16_t ev_battery_level_timer = 0;
+
+    static uint8_t battery_level           = 0;
+    static uint8_t bt_profile              = 0;
+    static uint8_t bt_prof_index           = 0;
+
+    static uint8_t bt_matrix_indexes[4];
+    static uint8_t blinking_color[3];
+
+
+    static inline void bt_profile_save(void) {
+        if (!eeconfig_is_enabled()) {
+            eeconfig_init();
+        }
+        uint32_t kb = eeconfig_read_kb();
+        kb &= ~KB_BT_PROFILE_MASK;
+        kb |= ((bt_profile & 0x3u) << KB_BT_PROFILE_SHIFT);
+        eeconfig_update_kb(kb);
     }
-    uint32_t kb = eeconfig_read_kb();
-    kb &= ~KB_BT_PROFILE_MASK;
-    kb |= ((bt_profile & 0x3u) << KB_BT_PROFILE_SHIFT);
-    eeconfig_update_kb(kb);
-}
 
-static inline void bt_profile_load(void) {
-    if (!eeconfig_is_enabled()) {
-        eeconfig_init();
+    static inline void bt_profile_load(void) {
+        if (!eeconfig_is_enabled()) {
+            eeconfig_init();
+        }
+        uint32_t kb = eeconfig_read_kb();
+        uint32_t p  = (kb & KB_BT_PROFILE_MASK) >> KB_BT_PROFILE_SHIFT;
+        bt_profile  = (p <= 2) ? p : 0;
     }
-    uint32_t kb = eeconfig_read_kb();
-    uint32_t p  = (kb & KB_BT_PROFILE_MASK) >> KB_BT_PROFILE_SHIFT;
-    bt_profile  = (p <= 2) ? p : 0;
-}
 
-static void set_profile_led_blinking(uint32_t current_time, uint32_t blink_ms, uint8_t r, uint8_t g, uint8_t b) {
-    if ((current_time / blink_ms) % 2 == 0) {
-        rgb_matrix_set_color(bt_prof_index, r, g, b);
-    } else {
-        rgb_matrix_set_color(bt_prof_index, 0, 0, 0);
+    static void set_profile_led_blinking(uint8_t r, uint8_t g, uint8_t b) {
+        static uint16_t current_time = 0;
+
+        uint8_t phase = 70;
+        uint16_t t = current_time % 280;
+        uint8_t val = 0;
+
+        if (t < phase / 2) {
+            if (r == 0 && g == 0 && b == 0) {
+                if (current_time != 0)
+                    current_time = 0;
+                return;
+            }
+            blinking_color[0]  = r;
+            blinking_color[1]  = g;
+            blinking_color[2]  = b;
+            val = 0;
+        } else if (t < (phase + phase / 2)) {
+            val = (uint8_t)((uint16_t)255 * (t - phase / 2) / phase);
+        } else if (t < (phase * 2 + phase / 2)) {
+            val = 255;
+        } else if (t < (phase * 3 + phase / 2)) {
+            val = (uint8_t)(255 - (uint16_t)255 * (t - (phase * 2 + phase / 2)) / phase);
+        } else {
+            val = 0;
+        }
+
+        uint8_t r_out = blinking_color[0] * val / 255;
+        uint8_t g_out = blinking_color[1] * val / 255;
+        uint8_t b_out = blinking_color[2] * val / 255;
+
+        rgb_matrix_set_color(bt_matrix_indexes[bt_profile], r_out, g_out, b_out);
+
+        current_time += 1;
     }
-}
 
-void iton_bt_connection_successful() {
-    ev_connected_timer = BT_CONNECTION_SUCCESSFUL_DURATION_MS;
-    ev_pairing_flag    = false;
-    ev_connecting_flag = false;
-}
+    void iton_bt_connection_successful() {
+        ev_connected_timer = BT_CONNECTION_SUCCESSFUL_DURATION_MS;
+        flags.pairing      = 0;
+        flags.connecting   = 0;
+    }
 
-void iton_bt_entered_pairing() {
-    ev_pairing_flag    = true;
-    ev_connected_timer = 0;
-    ev_connecting_flag = false;
-}
+    void iton_bt_entered_pairing() {
+        flags.pairing      = 1;
+        ev_connected_timer = 0;
+        flags.connecting   = 0;
+    }
 
-void iton_bt_enters_connection_state() {
-    ev_connecting_flag = true;
-    ev_connected_timer = 0;
-    ev_pairing_flag    = false;
-}
+    void iton_bt_enters_connection_state() {
+        flags.connecting   = 1;
+        ev_connected_timer = 0;
+        flags.pairing      = 0;
+    }
 
-void iton_bt_disconnected() {
-    ev_disconnected_timer = BT_DISCONNECTED_DURATION_MS;
-    ev_connected_timer    = 0;
-    ev_pairing_flag       = false;
-    ev_connecting_flag    = false;
-}
+    void iton_bt_disconnected() {
+        ev_disconnected_timer = BT_DISCONNECTED_DURATION_MS;
+        ev_connected_timer    = 0;
+        flags.pairing         = 0;
+        flags.connecting      = 0;
+    }
 
-void iton_bt_battery_level(uint8_t level) {
-    battery_level          = level;
-    ev_battery_level_timer = BT_BATTERY_DURATION_MS;
-}
+    void iton_bt_battery_level(uint8_t level) {
+        battery_level          = level;
+        ev_battery_level_timer = BT_BATTERY_DURATION_MS;
+    }
 #endif
 
 bool process_record_kb(uint16_t keycode, keyrecord_t *record) {
-
-#ifdef BLUETOOTH_ITON_BT
-    if (record->event.pressed && bluetooth_dip_switch) {
-        switch (keycode) {
-            case BT_PROFILE1:
-                {
-                    uint8_t profile_idx = 0;
-                    bt_profile = profile_idx;
-                    bt_prof_index = bt_prof1_index;
-                    bt_profile_save();
-                    iton_bt_switch_profile(profile_idx);
-                }
-                return false;
-            case BT_PROFILE2:
-                {
-                    uint8_t profile_idx = 1;
-                    bt_profile = profile_idx;
-                    bt_prof_index = bt_prof2_index;
-                    bt_profile_save();
-                    iton_bt_switch_profile(profile_idx);
-                }
-                return false;
-            case BT_PROFILE3:
-                {
-                    uint8_t profile_idx = 2;
-                    bt_profile = profile_idx;
-                    bt_prof_index = bt_prof3_index;
-                    bt_profile_save();
-                    iton_bt_switch_profile(profile_idx);
-                }
-                return false;
-            case BT_PAIR:
-                iton_bt_enter_pairing();
-                return false;
-            case BT_RESET:
-                iton_bt_reset_pairing();
-                return false;
-            case BT_BATTERY:
-                ev_battery_level_timer = BT_BATTERY_WAIT_QUERY_DURATION_MS;
-                iton_bt_query_battery_level();
-                return false;
-            default:
-                break;
+    #ifdef BLUETOOTH_ITON_BT
+        if (record->event.pressed && flags.dip_switch) {
+            switch (keycode) {
+                case BT_PROFILE1:
+                    {
+                        bt_profile = 0;
+                        bt_prof_index = bt_matrix_indexes[0];
+                        bt_profile_save();
+                        iton_bt_switch_profile(0);
+                    }
+                    return false;
+                case BT_PROFILE2:
+                    {
+                        bt_profile = 1;
+                        bt_prof_index = bt_matrix_indexes[1];
+                        bt_profile_save();
+                        iton_bt_switch_profile(1);
+                    }
+                    return false;
+                case BT_PROFILE3:
+                    {
+                        bt_profile = 2;
+                        bt_prof_index = bt_matrix_indexes[2];
+                        bt_profile_save();
+                        iton_bt_switch_profile(2);
+                    }
+                    return false;
+                case BT_PAIR:
+                    iton_bt_enter_pairing();
+                    return false;
+                case BT_RESET:
+                    iton_bt_reset_pairing();
+                    return false;
+                case BT_BATTERY:
+                    ev_battery_level_timer = BT_BATTERY_WAIT_QUERY_DURATION_MS;
+                    iton_bt_query_battery_level();
+                    return false;
+                default:
+                    break;
+            }
         }
-    }
-
-#endif
+    #endif
 
     switch (keycode) {
         case KC_LOPTN:
@@ -293,122 +306,115 @@ bool process_record_kb(uint16_t keycode, keyrecord_t *record) {
             break;
     }
     return process_record_user(keycode, record);
-
 }
 
 bool rgb_matrix_indicators_advanced_user(uint8_t led_min, uint8_t led_max) {
-    uint32_t current_time = timer_read();
-    uint32_t elapsed      = (current_time >= last_update_time) ? (current_time - last_update_time) : 1;
-    last_update_time      = current_time;
+    #ifdef BLUETOOTH_ITON_BT
+        uint16_t current_time = timer_read();
+        uint16_t elapsed      = current_time - last_update_time;
+        last_update_time      = current_time;
+    #endif
 
-    if (startup_flash > 0) {
-        hsv_t flash     = (hsv_t)rgb_matrix_config.hsv;
-        flash.v         = (uint8_t)((startup_flash * 255UL) / STARTUP_FLASH_DURATION_MS);
-        rgb_t flash_rgb = hsv_to_rgb(flash);
-        rgb_matrix_set_color_all(flash_rgb.r, flash_rgb.g, flash_rgb.b);
-        if (elapsed >= startup_flash) {
-            startup_flash = 0;
-        } else {
-            startup_flash -= elapsed;
-        }
-        return true;
-    }
-
-    hsv_t hsv_color = (hsv_t)rgb_matrix_config.hsv;
-    hsv_color.v = 255;
-    rgb_t color = hsv_to_rgb(hsv_color);
+    hsv_t hsv_color = rgb_matrix_config.hsv;
+    hsv_color.v     = 255;
+    rgb_t color     = hsv_to_rgb(hsv_color);
 
     uint8_t layer = get_highest_layer(layer_state);
-    if (layer == 0 || layer == 2) {
-        #ifdef BLUETOOTH_ITON_BT
-            for (uint8_t row = 0; row < MATRIX_ROWS; ++row) {
-                for (uint8_t col = 0; col < MATRIX_COLS; ++col) {
-                    uint8_t index = g_led_config.matrix_co[row][col];
-
-                    if (index >= led_min && index < led_max && index != NO_LED) {
+    for (uint8_t row = 0; row < MATRIX_ROWS; ++row) {
+        for (uint8_t col = 0; col < MATRIX_COLS; ++col) {
+            uint8_t index = g_led_config.matrix_co[row][col];
+            if (index >= led_min && index < led_max && index != NO_LED && layer != 0 && layer != 2) {
+                uint16_t keycode = keymap_key_to_keycode(layer, (keypos_t){col, row});
+                #ifdef BLUETOOTH_ITON_BT
+                    if (keycode == KC_TRNS || keycode == KC_NO || ((keycode == BT_PROFILE1 || keycode == BT_PROFILE2 || keycode == BT_PROFILE3 || keycode == BT_PAIR || keycode == BT_RESET || keycode == BT_BATTERY) && !flags.dip_switch)) {
+                        rgb_matrix_set_color(index, 0x01, 0x01, 0x01);
+                    } else {
+                        rgb_matrix_set_color(index, color.r, color.g, color.b);
+                    }
+                #else
+                    if (keycode == KC_TRNS || keycode == KC_NO || keycode == BT_PROFILE1 || keycode == BT_PROFILE2 || keycode == BT_PROFILE3 || keycode == BT_PAIR || keycode == BT_RESET || keycode == BT_BATTERY) {
+                        rgb_matrix_set_color(index, 0x01, 0x01, 0x01);
+                    } else {
+                        rgb_matrix_set_color(index, color.r, color.g, color.b);
+                    }
+                #endif
+            }
+            #ifdef BLUETOOTH_ITON_BT
+                if (index >= led_min && index < led_max && index != NO_LED && (layer == 0 || layer == 2) && flags.dip_switch) {
                     uint16_t keycode = keymap_key_to_keycode(layer + 1, (keypos_t){col, row});
-                        if (keycode == BT_PROFILE1) {
-                            bt_prof1_index = index;
-                        } else if (keycode == BT_PROFILE2) {
-                            bt_prof2_index = index;
-                        } else if (keycode == BT_PROFILE3) {
-                            bt_prof3_index = index;
-                        } else if (keycode == BT_BATTERY) {
-                            bt_batt_index = index;
-                        }
+                    switch (keycode) {
+                        case BT_PROFILE1:
+                            bt_matrix_indexes[0] = index;
+                            break;
+                        case BT_PROFILE2:
+                            bt_matrix_indexes[1] = index;
+                            break;
+                        case BT_PROFILE3:
+                            bt_matrix_indexes[2] = index;
+                            break;
+                        case BT_BATTERY:
+                            bt_matrix_indexes[3] = index;
+                            break;
+                        default:
+                            break;
+                    }
 
-                        if (bt_profile == 0) {
-                            bt_prof_index = bt_prof1_index;
-                        } else if (bt_profile == 1) {
-                            bt_prof_index = bt_prof2_index;
-                        } else if (bt_profile == 2) {
-                            bt_prof_index = bt_prof3_index;
-                        }
+                    switch (bt_profile) {
+                        case 0:
+                            bt_prof_index = bt_matrix_indexes[0];
+                            break;
+                        case 1:
+                            bt_prof_index = bt_matrix_indexes[1];
+                            break;
+                        case 2:
+                            bt_prof_index = bt_matrix_indexes[2];
+                            break;
+                        default:
+                            break;
                     }
                 }
-            }
-        #endif
-    } else if (layer != 0 && layer != 2) {
-        for (uint8_t row = 0; row < MATRIX_ROWS; ++row) {
-            for (uint8_t col = 0; col < MATRIX_COLS; ++col) {
-                uint8_t index = g_led_config.matrix_co[row][col];
-
-                if (index >= led_min && index < led_max && index != NO_LED) {
-                uint16_t keycode = keymap_key_to_keycode(layer, (keypos_t){col, row});
-                    #ifdef BLUETOOTH_ITON_BT
-                        if (keycode == KC_TRNS || keycode == KC_NO || ((keycode == BT_PROFILE1 || keycode == BT_PROFILE2 || keycode == BT_PROFILE3 || keycode == BT_PAIR || keycode == BT_RESET || keycode == BT_BATTERY) && !bluetooth_dip_switch)) {
-                            rgb_matrix_set_color(index, 0x01, 0x01, 0x01);
-                        } else {
-                            rgb_matrix_set_color(index, color.r, color.g, color.b);
-                        }
-                    #else
-                        if (keycode == KC_TRNS || keycode == KC_NO || keycode == BT_PROFILE1 || keycode == BT_PROFILE2 || keycode == BT_PROFILE3 || keycode == BT_PAIR || keycode == BT_RESET || keycode == BT_BATTERY) {
-                            rgb_matrix_set_color(index, 0x01, 0x01, 0x01);
-                        } else {
-                            rgb_matrix_set_color(index, color.r, color.g, color.b);
-                        }
-                    #endif
-                }
-            }
+            #endif
         }
     }
 
-#ifdef BLUETOOTH_ITON_BT
-    if (!bluetooth_dip_switch) {
-        return true;
-    }
+    #ifdef BLUETOOTH_ITON_BT
+        if (!flags.dip_switch) {
+            return true;
+        }
 
-    if (ev_pairing_flag) {
-        set_profile_led_blinking(current_time, BT_PAIRING_BLINK_MS, RGB_BLUE);
-    } else if (ev_connecting_flag) {
-        set_profile_led_blinking(current_time, BT_CONNECTING_BLINK_MS, RGB_BLUE);
-    } else if (ev_connected_timer > 0) {
-        rgb_matrix_set_color(bt_prof_index, RGB_WHITE);
-    } else if (ev_disconnected_timer > 0) {
-        set_profile_led_blinking(current_time, BT_DISCONNECTED_BLINK_MS, RGB_RED);
-    }
-
-    if (ev_connected_timer > elapsed)
-        ev_connected_timer -= elapsed;
-    else
-        ev_connected_timer = 0;
-    if (ev_disconnected_timer > elapsed)
-        ev_disconnected_timer -= elapsed;
-    else
-        ev_disconnected_timer = 0;
-
-    if (ev_battery_level_timer > 0) {
-        rgb_t color = BATTERY_COLOR_MAP[battery_level];
-        rgb_matrix_set_color(bt_batt_index, color.r, color.g, color.b);
-
-        if (ev_battery_level_timer > elapsed) {
-            ev_battery_level_timer -= elapsed;
+        if (flags.pairing) {
+            set_profile_led_blinking(RGB_BLUE);
+        } else if (flags.connecting) {
+            set_profile_led_blinking(RGB_BLUE);
+        } else if (ev_connected_timer > 0) {
+            set_profile_led_blinking(RGB_WHITE);
+        } else if (ev_disconnected_timer > 0) {
+            set_profile_led_blinking(RGB_RED);
         } else {
-            ev_battery_level_timer = 0;
-            battery_level          = BATTERY_LEVEL_NONE;
+            set_profile_led_blinking(RGB_BLACK);
         }
-    }
-#endif
+
+        if (ev_connected_timer > elapsed)
+            ev_connected_timer -= elapsed;
+        else
+            ev_connected_timer = 0;
+        if (ev_disconnected_timer > elapsed)
+            ev_disconnected_timer -= elapsed;
+        else
+            ev_disconnected_timer = 0;
+
+        if (ev_battery_level_timer > 0) {
+            rgb_t batt_color = BATTERY_COLOR_MAP[battery_level];
+            rgb_matrix_set_color(bt_matrix_indexes[3], batt_color.r, batt_color.g, batt_color.b);
+
+            if (ev_battery_level_timer > elapsed) {
+                ev_battery_level_timer -= elapsed;
+            } else {
+                ev_battery_level_timer = 0;
+                battery_level          = BATTERY_LEVEL_NONE;
+            }
+        }
+    #endif
     return true;
 }
 
@@ -428,21 +434,15 @@ bool dip_switch_update_user(uint8_t index, bool active) {
                 iton_bt_deinit();
                 set_output(OUTPUT_USB);
             }
-            bluetooth_dip_switch = !active;
+            flags.dip_switch = !active;
             return false;
 #endif
     }
     return true;
 }
 
-#ifdef BLUETOOTH_ITON_BT
-    // Keychron K3-specific. Without it keyboard spams Tab, ` and other keys in bluetooth mode.
-    void matrix_output_select_delay(void) {
-        waitInputPinDelay();
-        if (bluetooth_dip_switch) {
-            waitInputPinDelay();
-            waitInputPinDelay();
-            waitInputPinDelay();
-        }
-    }
-#endif
+// Keychron K3-specific. Without it keyboard spams Tab, ` and other keys in bluetooth mode.
+void matrix_output_select_delay(void) {
+    waitInputPinDelay();
+    waitInputPinDelay();
+}

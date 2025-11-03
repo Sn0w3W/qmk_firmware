@@ -1,7 +1,7 @@
 {
     "manufacturer": "Keychron",
     "url": "https://www.keychron.com/collections/keychron-k-series-keyboard/products/keychron-k3-wireless-mechanical-keyboard",
-    "maintainer": "macaholik",
+    "maintainer": "Sn0w3W",
     "usb": {
 		"vid": "0x3434",
 		"device_version": "1.0.0"
@@ -60,9 +60,9 @@
         },
 		"default": {
 			"animation": "riverflow",
-			"hue": 176,
-			"sat": 255,
-            "val": 255
+			"hue": 24,   // Step: 8
+			"sat": 204,  // Step: 17
+            "val": 255   // Step: 17
 		},
         "sleep": true,
         "timeout": 30000
