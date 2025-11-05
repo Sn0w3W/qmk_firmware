@@ -113,6 +113,7 @@ const rgb_t BATTERY_COLOR_MAP[] = {
             val = (uint8_t)(255 - (uint16_t)255 * (t - (phase * 2 + phase / 2)) / phase);
         } else {
             val = 0;
+            current_time = 0;
         }
 
         uint8_t r_out = blinking_color[0] * val / 255;
@@ -312,7 +313,7 @@ bool process_record_kb(uint16_t keycode, keyrecord_t *record) {
 bool rgb_matrix_indicators_advanced_user(uint8_t led_min, uint8_t led_max) {
     #ifdef BLUETOOTH_ITON_BT
         uint16_t current_time = timer_read();
-        uint16_t elapsed      = current_time - last_update_time;
+        uint16_t elapsed      = timer_elapsed(last_update_time);
         last_update_time      = current_time;
     #endif
 
