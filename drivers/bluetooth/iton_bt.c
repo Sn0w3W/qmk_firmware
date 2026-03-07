@@ -58,6 +58,16 @@ uint8_t iton_bt_led_state = 0x00;
 static uint8_t iton_bt_buffer[ITON_BT_BUFFER_LEN];
 uint8_t        iton_bt_send_kb_last_key = 0x00;
 
+#ifdef ITON_BT_ENABLE_ACK
+#define ITON_BT_ACK_QUEUE_SIZE 4
+static volatile struct {
+    uint8_t b1[ITON_BT_ACK_QUEUE_SIZE];
+    uint8_t b2[ITON_BT_ACK_QUEUE_SIZE];
+    uint8_t head;
+    uint8_t count;
+} iton_bt_ack_queue = {0};
+#endif
+
 const SPIConfig iton_bt_spicfg = {
     .slave   = true,
     .data_cb = iton_bt_data_cb,
@@ -224,13 +234,28 @@ void iton_bt_send2(uint8_t cmd, uint8_t b1, uint8_t b2) {
 }
 
 inline void iton_bt_send_ack(uint8_t b1, uint8_t b2) {
-    writePinHigh(ITON_BT_IRQ_LINE);
-    iton_bt_buffer[0] = control;
-    iton_bt_buffer[1] = b1;
-    iton_bt_buffer[2] = b2;
-    chSysLockFromISR();
-    spiStartSendI(&ITON_BT_SPI_PORT, 3, &iton_bt_buffer[0]);
-    chSysUnlockFromISR();
+#ifdef ITON_BT_ENABLE_ACK
+    if (iton_bt_ack_queue.count < ITON_BT_ACK_QUEUE_SIZE) {
+        uint8_t idx = (iton_bt_ack_queue.head + iton_bt_ack_queue.count) % ITON_BT_ACK_QUEUE_SIZE;
+        iton_bt_ack_queue.b1[idx] = b1;
+        iton_bt_ack_queue.b2[idx] = b2;
+        iton_bt_ack_queue.count++;
+    }
+#endif
+}
+
+void iton_bt_task(void) {
+#ifdef ITON_BT_ENABLE_ACK
+    while (iton_bt_ack_queue.count > 0) {
+        chSysLock();
+        uint8_t b1 = iton_bt_ack_queue.b1[iton_bt_ack_queue.head];
+        uint8_t b2 = iton_bt_ack_queue.b2[iton_bt_ack_queue.head];
+        iton_bt_ack_queue.head = (iton_bt_ack_queue.head + 1) % ITON_BT_ACK_QUEUE_SIZE;
+        iton_bt_ack_queue.count--;
+        chSysUnlock();
+        iton_bt_send2(control, b1, b2);
+    }
+#endif
 }
 
 void iton_bt_send_fn(bool pressed) {

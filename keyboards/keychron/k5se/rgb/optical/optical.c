@@ -421,6 +421,7 @@ void housekeeping_task_kb(void) {
         bt_recalc_matrix_indexes();
         bt_indexes_initialized = true;
     }
+    iton_bt_task();
 #endif
 #ifdef DEFERRED_EEPROM_SAVE
     static bool deferred_initialized = false;
