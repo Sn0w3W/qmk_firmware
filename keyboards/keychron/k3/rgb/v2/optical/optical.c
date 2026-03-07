@@ -23,50 +23,122 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #endif
 
 #ifdef BLUETOOTH_ITON_BT
-    #define BT_CONNECTION_SUCCESSFUL_DURATION_MS 2500
-    #define BT_DISCONNECTED_DURATION_MS 2500
     #define BT_BATTERY_DURATION_MS 2500
     #define BT_BATTERY_WAIT_QUERY_DURATION_MS 10000
 
-    #define KB_BT_PROFILE_MASK  (0x3u << 0)
-    #define KB_BT_PROFILE_SHIFT 0
+    #define KB_BT_PROFILE_MASK  0x3u
 
-    #define NUM_BATTERY_LEVELS (sizeof(BATTERY_COLOR_MAP) / sizeof(BATTERY_COLOR_MAP[0]))
-
-    typedef enum {
-        BATTERY_LEVEL_NONE = 0,
-        BATTERY_LEVEL_CRITICAL = 1,
-        BATTERY_LEVEL_LOW = 2,
-        BATTERY_LEVEL_MEDIUM = 3,
-        BATTERY_LEVEL_FULL = 4
-    } battery_level_t;
-
-    const rgb_t BATTERY_COLOR_MAP[] = {
-        {RGB_WHITE},
+    // BT module reports: 0x01 = below 30%, 0x02 = 30-70%, 0x04 = above 70%
+    // bt_battery_map_level() converts raw values to 0/1/2 index
+    static const rgb_t BATTERY_COLOR_MAP[] = {
         {RGB_RED},
-        {RGB_ORANGE},
         {RGB_YELLOW},
         {RGB_GREEN}
     };
 
+    #define BT_BLINK_MAX_CYCLES 3
+    #define BT_BLINK_RAMP_MS    200
+    #define BT_BLINK_DWELL_MS   200
+    #define BT_BLINK_CYCLE_MS   ((BT_BLINK_DWELL_MS + BT_BLINK_RAMP_MS) * 2)
+
     static struct {
-        uint8_t connecting : 1;
-        uint8_t pairing    : 1;
         uint8_t dip_switch : 1;
     } flags = {0};
 
-    static uint16_t last_update_time = 0;
-    static uint16_t ev_disconnected_timer  = 0;
-    static uint16_t ev_connected_timer     = 0;
+    static uint16_t last_update_time       = 0;
     static uint16_t ev_battery_level_timer = 0;
 
     static uint8_t battery_level           = 0;
     static uint8_t bt_profile              = 0;
-    static uint8_t bt_prof_index           = 0;
 
     static uint8_t bt_matrix_indexes[4];
-    static uint8_t blinking_color[3];
 
+    static struct {
+        uint8_t  color[3];          // текущий цвет анимации
+        uint8_t  pending_color[3];  // последнее событие из очереди
+        bool     has_pending;       // есть новое событие
+        bool     active;            // анимация идёт
+        bool     continuous;        // мигать пока не придёт новое событие
+        uint16_t start_time;        // начало текущего цикла
+        uint8_t  cycles_done;       // циклов без новых событий
+        uint8_t  led_index;         // LED текущей анимации (меняется на границе цикла)
+    } blink = {0};
+
+    static void bt_blink_queue(uint8_t r, uint8_t g, uint8_t b, bool continuous) {
+        blink.pending_color[0] = r;
+        blink.pending_color[1] = g;
+        blink.pending_color[2] = b;
+        blink.has_pending = true;
+        blink.continuous = continuous;
+    }
+
+    static void bt_blink_update(void) {
+        // На границе цикла или при старте: подхватить pending
+        if (!blink.active) {
+            if (!blink.has_pending) return;
+            blink.color[0] = blink.pending_color[0];
+            blink.color[1] = blink.pending_color[1];
+            blink.color[2] = blink.pending_color[2];
+            blink.has_pending = false;
+            blink.active = true;
+            blink.cycles_done = 0;
+            blink.led_index = bt_matrix_indexes[bt_profile];
+            blink.start_time = timer_read();
+        }
+
+        uint16_t elapsed = timer_elapsed(blink.start_time);
+
+        // Цикл завершён — проверяем очередь
+        if (elapsed >= BT_BLINK_CYCLE_MS) {
+            blink.start_time += (elapsed / BT_BLINK_CYCLE_MS) * BT_BLINK_CYCLE_MS;
+            elapsed = timer_elapsed(blink.start_time);
+
+            blink.led_index = bt_matrix_indexes[bt_profile];
+
+            if (blink.has_pending) {
+                // Новое событие — переключаем цвет, сбрасываем счётчик
+                blink.color[0] = blink.pending_color[0];
+                blink.color[1] = blink.pending_color[1];
+                blink.color[2] = blink.pending_color[2];
+                blink.has_pending = false;
+                blink.cycles_done = 0;
+            } else if (!blink.continuous) {
+                blink.cycles_done++;
+                if (blink.cycles_done >= BT_BLINK_MAX_CYCLES) {
+                    blink.active = false;
+                    return;
+                }
+            }
+        }
+
+        // Анимация: ⬛ dwell → ramp up → 💡 dwell → ramp down
+        uint8_t val;
+        if (elapsed < BT_BLINK_DWELL_MS) {
+            val = 0;
+        } else if (elapsed < BT_BLINK_DWELL_MS + BT_BLINK_RAMP_MS) {
+            uint16_t t = elapsed - BT_BLINK_DWELL_MS;
+            val = (uint8_t)((uint16_t)255 * t / BT_BLINK_RAMP_MS);
+        } else if (elapsed < BT_BLINK_DWELL_MS * 2 + BT_BLINK_RAMP_MS) {
+            val = 255;
+        } else {
+            uint16_t t = elapsed - BT_BLINK_DWELL_MS * 2 - BT_BLINK_RAMP_MS;
+            val = (uint8_t)(255 - (uint16_t)255 * t / BT_BLINK_RAMP_MS);
+        }
+
+        // S-кривая: плавно у 0 и у 255
+        if (val < 128) {
+            val = (uint8_t)((uint16_t)val * val >> 7);
+        } else {
+            uint8_t inv = 255 - val;
+            val = 255 - (uint8_t)((uint16_t)inv * inv >> 7);
+        }
+
+        uint8_t r_out = blink.color[0] * val / 255;
+        uint8_t g_out = blink.color[1] * val / 255;
+        uint8_t b_out = blink.color[2] * val / 255;
+
+        rgb_matrix_set_color(blink.led_index, r_out, g_out, b_out);
+    }
 
     static inline void bt_profile_save(void) {
         if (!eeconfig_is_enabled()) {
@@ -74,7 +146,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         }
         uint32_t kb = eeconfig_read_kb();
         kb &= ~KB_BT_PROFILE_MASK;
-        kb |= ((bt_profile & 0x3u) << KB_BT_PROFILE_SHIFT);
+        kb |= (bt_profile & KB_BT_PROFILE_MASK);
         eeconfig_update_kb(kb);
     }
 
@@ -83,75 +155,50 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
             eeconfig_init();
         }
         uint32_t kb = eeconfig_read_kb();
-        uint32_t p  = (kb & KB_BT_PROFILE_MASK) >> KB_BT_PROFILE_SHIFT;
+        uint32_t p  = kb & KB_BT_PROFILE_MASK;
         bt_profile  = (p <= 2) ? p : 0;
     }
 
-    static void set_profile_led_blinking(uint8_t r, uint8_t g, uint8_t b) {
-        static uint16_t current_time = 0;
-
-        uint8_t phase = 70;
-        uint16_t t = current_time % 280;
-        uint8_t val = 0;
-
-        if (t < phase / 2) {
-            if (r == 0 && g == 0 && b == 0) {
-                if (current_time != 0)
-                    current_time = 0;
-                return;
-            }
-            blinking_color[0]  = r;
-            blinking_color[1]  = g;
-            blinking_color[2]  = b;
-            val = 0;
-        } else if (t < (phase + phase / 2)) {
-            val = (uint8_t)((uint16_t)255 * (t - phase / 2) / phase);
-        } else if (t < (phase * 2 + phase / 2)) {
-            val = 255;
-        } else if (t < (phase * 3 + phase / 2)) {
-            val = (uint8_t)(255 - (uint16_t)255 * (t - (phase * 2 + phase / 2)) / phase);
-        } else {
-            val = 0;
-            current_time = 0;
-        }
-
-        uint8_t r_out = blinking_color[0] * val / 255;
-        uint8_t g_out = blinking_color[1] * val / 255;
-        uint8_t b_out = blinking_color[2] * val / 255;
-
-        rgb_matrix_set_color(bt_matrix_indexes[bt_profile], r_out, g_out, b_out);
-
-        current_time += 1;
-    }
-
     void iton_bt_connection_successful() {
-        ev_connected_timer = BT_CONNECTION_SUCCESSFUL_DURATION_MS;
-        flags.pairing      = 0;
-        flags.connecting   = 0;
+        bt_blink_queue(RGB_WHITE, false);
     }
 
     void iton_bt_entered_pairing() {
-        flags.pairing      = 1;
-        ev_connected_timer = 0;
-        flags.connecting   = 0;
+        bt_blink_queue(RGB_BLUE, true);
     }
 
     void iton_bt_enters_connection_state() {
-        flags.connecting   = 1;
-        ev_connected_timer = 0;
-        flags.pairing      = 0;
+        bt_blink_queue(RGB_BLUE, true);
     }
 
     void iton_bt_disconnected() {
-        ev_disconnected_timer = BT_DISCONNECTED_DURATION_MS;
-        ev_connected_timer    = 0;
-        flags.pairing         = 0;
-        flags.connecting      = 0;
+        bt_blink_queue(RGB_RED, false);
     }
 
     void iton_bt_battery_level(uint8_t level) {
-        battery_level          = level;
+        // 0x01 -> 0, 0x02 -> 1, 0x04 -> 2
+        if (level == 0x01)      battery_level = 0;
+        else if (level == 0x02) battery_level = 1;
+        else                    battery_level = 2;
         ev_battery_level_timer = BT_BATTERY_DURATION_MS;
+    }
+
+    static void bt_recalc_matrix_indexes(void) {
+        uint8_t fn_layer = (get_highest_layer(layer_state) <= 1) ? MAC_FN : WIN_FN;
+        for (uint8_t row = 0; row < MATRIX_ROWS; row++) {
+            for (uint8_t col = 0; col < MATRIX_COLS; col++) {
+                uint8_t index = g_led_config.matrix_co[row][col];
+                if (index == NO_LED) continue;
+                uint16_t keycode = keymap_key_to_keycode(fn_layer, (keypos_t){col, row});
+                switch (keycode) {
+                    case BT_PROFILE1: bt_matrix_indexes[0] = index; break;
+                    case BT_PROFILE2: bt_matrix_indexes[1] = index; break;
+                    case BT_PROFILE3: bt_matrix_indexes[2] = index; break;
+                    case BT_BATTERY:  bt_matrix_indexes[3] = index; break;
+                }
+            }
+        }
+
     }
 #endif
 
@@ -160,28 +207,14 @@ bool process_record_kb(uint16_t keycode, keyrecord_t *record) {
         if (record->event.pressed && flags.dip_switch) {
             switch (keycode) {
                 case BT_PROFILE1:
-                    {
-                        bt_profile = 0;
-                        bt_prof_index = bt_matrix_indexes[0];
-                        bt_profile_save();
-                        iton_bt_switch_profile(0);
-                    }
-                    return false;
                 case BT_PROFILE2:
-                    {
-                        bt_profile = 1;
-                        bt_prof_index = bt_matrix_indexes[1];
-                        bt_profile_save();
-                        iton_bt_switch_profile(1);
-                    }
-                    return false;
                 case BT_PROFILE3:
-                    {
-                        bt_profile = 2;
-                        bt_prof_index = bt_matrix_indexes[2];
-                        bt_profile_save();
-                        iton_bt_switch_profile(2);
-                    }
+                {
+                    uint8_t p = keycode - BT_PROFILE1;
+                    bt_profile = p;
+                    bt_profile_save();
+                    iton_bt_switch_profile(p);
+                }
                     return false;
                 case BT_PAIR:
                     iton_bt_enter_pairing();
@@ -199,49 +232,27 @@ bool process_record_kb(uint16_t keycode, keyrecord_t *record) {
         }
     #endif
 
+    static const uint16_t keycode_map[][2] = {
+        {KC_LOPTN, KC_LOPT},
+        {KC_ROPTN, KC_ROPT},
+        {KC_LCMMD, KC_LCMD},
+        {KC_RCMMD, KC_RCMD},
+        {KC_MISC,  KC_MISSION_CONTROL},
+        {KC_LAUN,  KC_LAUNCHPAD},
+    };
+
+    for (uint8_t i = 0; i < sizeof(keycode_map) / sizeof(keycode_map[0]); i++) {
+        if (keycode == keycode_map[i][0]) {
+            if (record->event.pressed) {
+                register_code(keycode_map[i][1]);
+            } else {
+                unregister_code(keycode_map[i][1]);
+            }
+            return false;
+        }
+    }
+
     switch (keycode) {
-        case KC_LOPTN:
-            if (record->event.pressed) {
-                register_code(KC_LOPT);
-            } else {
-                unregister_code(KC_LOPT);
-            }
-            return false;
-        case KC_ROPTN:
-            if (record->event.pressed) {
-                register_code(KC_ROPT);
-            } else {
-                unregister_code(KC_ROPT);
-            }
-            return false;
-        case KC_LCMMD:
-            if (record->event.pressed) {
-                register_code(KC_LCMD);
-            } else {
-                unregister_code(KC_LCMD);
-            }
-            return false;
-        case KC_RCMMD:
-            if (record->event.pressed) {
-                register_code(KC_RCMD);
-            } else {
-                unregister_code(KC_RCMD);
-            }
-            return false;
-        case KC_MISC:
-            if (record->event.pressed) {
-                register_code(KC_MISSION_CONTROL);
-            } else {
-                unregister_code(KC_MISSION_CONTROL);
-            }
-            return false;
-        case KC_LAUN:
-            if (record->event.pressed) {
-                register_code(KC_LAUNCHPAD);
-            } else {
-                unregister_code(KC_LAUNCHPAD);
-            }
-            return false;
         case KC_SPOT:
             if (record->event.pressed) {
                 host_consumer_send(0x221);
@@ -310,15 +321,18 @@ bool process_record_kb(uint16_t keycode, keyrecord_t *record) {
 }
 
 bool rgb_matrix_indicators_advanced_user(uint8_t led_min, uint8_t led_max) {
-    #ifdef BLUETOOTH_ITON_BT
-        uint16_t current_time = timer_read();
-        uint16_t elapsed      = timer_elapsed(last_update_time);
-        last_update_time      = current_time;
-    #endif
 
-    hsv_t hsv_color = rgb_matrix_config.hsv;
-    hsv_color.v     = 255;
-    rgb_t color     = hsv_to_rgb(hsv_color);
+    static hsv_t cached_hsv   = {0};
+    static rgb_t cached_color = {0};
+
+    hsv_t current_hsv = rgb_matrix_config.hsv;
+    current_hsv.v = 255;
+
+    if (current_hsv.h != cached_hsv.h || current_hsv.s != cached_hsv.s) {
+        cached_color = hsv_to_rgb(current_hsv);
+        cached_hsv   = current_hsv;
+    }
+    rgb_t color = cached_color;
 
     uint8_t layer = get_highest_layer(layer_state);
     for (uint8_t row = 0; row < MATRIX_ROWS; ++row) {
@@ -326,55 +340,22 @@ bool rgb_matrix_indicators_advanced_user(uint8_t led_min, uint8_t led_max) {
             uint8_t index = g_led_config.matrix_co[row][col];
             if (index >= led_min && index < led_max && index != NO_LED && layer != 0 && layer != 2) {
                 uint16_t keycode = keymap_key_to_keycode(layer, (keypos_t){col, row});
-                #ifdef BLUETOOTH_ITON_BT
-                    if (keycode == KC_TRNS || keycode == KC_NO || ((keycode == BT_PROFILE1 || keycode == BT_PROFILE2 || keycode == BT_PROFILE3 || keycode == BT_PAIR || keycode == BT_RESET || keycode == BT_BATTERY) && !flags.dip_switch)) {
-                        rgb_matrix_set_color(index, 0x01, 0x01, 0x01);
-                    } else {
-                        rgb_matrix_set_color(index, color.r, color.g, color.b);
-                    }
-                #else
-                    if (keycode == KC_TRNS || keycode == KC_NO || keycode == BT_PROFILE1 || keycode == BT_PROFILE2 || keycode == BT_PROFILE3 || keycode == BT_PAIR || keycode == BT_RESET || keycode == BT_BATTERY) {
-                        rgb_matrix_set_color(index, 0x01, 0x01, 0x01);
-                    } else {
-                        rgb_matrix_set_color(index, color.r, color.g, color.b);
-                    }
-                #endif
-            }
-            #ifdef BLUETOOTH_ITON_BT
-                if (index >= led_min && index < led_max && index != NO_LED && (layer == 0 || layer == 2) && flags.dip_switch) {
-                    uint16_t keycode = keymap_key_to_keycode(layer + 1, (keypos_t){col, row});
-                    switch (keycode) {
-                        case BT_PROFILE1:
-                            bt_matrix_indexes[0] = index;
-                            break;
-                        case BT_PROFILE2:
-                            bt_matrix_indexes[1] = index;
-                            break;
-                        case BT_PROFILE3:
-                            bt_matrix_indexes[2] = index;
-                            break;
-                        case BT_BATTERY:
-                            bt_matrix_indexes[3] = index;
-                            break;
-                        default:
-                            break;
-                    }
+                bool is_inactive = (keycode == KC_TRNS || keycode == KC_NO);
 
-                    switch (bt_profile) {
-                        case 0:
-                            bt_prof_index = bt_matrix_indexes[0];
-                            break;
-                        case 1:
-                            bt_prof_index = bt_matrix_indexes[1];
-                            break;
-                        case 2:
-                            bt_prof_index = bt_matrix_indexes[2];
-                            break;
-                        default:
-                            break;
-                    }
+                if (!is_inactive && keycode >= BT_PROFILE1 && keycode <= BT_RESET) {
+                #ifdef BLUETOOTH_ITON_BT
+                    is_inactive = !flags.dip_switch;
+                #else
+                    is_inactive = true;
+                #endif
                 }
-            #endif
+
+                if (is_inactive) {
+                    rgb_matrix_set_color(index, 0x01, 0x01, 0x01);
+                } else {
+                    rgb_matrix_set_color(index, color.r, color.g, color.b);
+                }
+            }
         }
     }
 
@@ -383,26 +364,10 @@ bool rgb_matrix_indicators_advanced_user(uint8_t led_min, uint8_t led_max) {
             return true;
         }
 
-        if (flags.pairing) {
-            set_profile_led_blinking(RGB_BLUE);
-        } else if (flags.connecting) {
-            set_profile_led_blinking(RGB_BLUE);
-        } else if (ev_connected_timer > 0) {
-            set_profile_led_blinking(RGB_WHITE);
-        } else if (ev_disconnected_timer > 0) {
-            set_profile_led_blinking(RGB_RED);
-        } else {
-            set_profile_led_blinking(RGB_BLACK);
-        }
+        bt_blink_update();
 
-        if (ev_connected_timer > elapsed)
-            ev_connected_timer -= elapsed;
-        else
-            ev_connected_timer = 0;
-        if (ev_disconnected_timer > elapsed)
-            ev_disconnected_timer -= elapsed;
-        else
-            ev_disconnected_timer = 0;
+        uint16_t elapsed = timer_elapsed(last_update_time);
+        last_update_time = timer_read();
 
         if (ev_battery_level_timer > 0) {
             rgb_t batt_color = BATTERY_COLOR_MAP[battery_level];
@@ -412,12 +377,22 @@ bool rgb_matrix_indicators_advanced_user(uint8_t led_min, uint8_t led_max) {
                 ev_battery_level_timer -= elapsed;
             } else {
                 ev_battery_level_timer = 0;
-                battery_level          = BATTERY_LEVEL_NONE;
+                battery_level          = 0;
             }
         }
     #endif
     return true;
 }
+
+#ifdef BLUETOOTH_ITON_BT
+void housekeeping_task_kb(void) {
+    static bool bt_indexes_initialized = false;
+    if (!bt_indexes_initialized) {
+        bt_recalc_matrix_indexes();
+        bt_indexes_initialized = true;
+    }
+}
+#endif
 
 bool dip_switch_update_user(uint8_t index, bool active) {
     switch (index) {
