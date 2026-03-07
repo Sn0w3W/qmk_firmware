@@ -396,6 +396,13 @@ void housekeeping_task_kb(void) {
         bt_indexes_initialized = true;
     }
     iton_bt_task();
+#ifdef ITON_BT_ENABLE_LED_STATE
+    static uint8_t prev_bt_led_state = 0xFF;
+    if (iton_bt_led_state != prev_bt_led_state) {
+        prev_bt_led_state = iton_bt_led_state;
+        led_set(iton_bt_led_state);
+    }
+#endif
 #endif
 #ifdef DEFERRED_EEPROM_SAVE
     static bool deferred_initialized = false;

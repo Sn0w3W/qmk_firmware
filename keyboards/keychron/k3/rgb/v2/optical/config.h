@@ -22,4 +22,5 @@
 
 #ifdef BLUETOOTH_ITON_BT
     #define ITON_BT_ENABLE_ACK
+    #define ITON_BT_ENABLE_LED_STATE
 #endif
