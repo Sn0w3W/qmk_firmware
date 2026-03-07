@@ -16,6 +16,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "keymap.h"
+#ifdef DEFERRED_EEPROM_SAVE
+    #include "wear_leveling.h"
+#endif
 
 #ifdef BLUETOOTH_ITON_BT
     #include "iton_bt.h"
@@ -384,13 +387,26 @@ bool rgb_matrix_indicators_advanced_user(uint8_t led_min, uint8_t led_max) {
     return true;
 }
 
-#ifdef BLUETOOTH_ITON_BT
+#if defined(BLUETOOTH_ITON_BT) || defined(DEFERRED_EEPROM_SAVE)
 void housekeeping_task_kb(void) {
+#ifdef BLUETOOTH_ITON_BT
     static bool bt_indexes_initialized = false;
     if (!bt_indexes_initialized) {
         bt_recalc_matrix_indexes();
         bt_indexes_initialized = true;
     }
+#endif
+#ifdef DEFERRED_EEPROM_SAVE
+    static bool deferred_initialized = false;
+    if (!deferred_initialized) {
+        wear_leveling_set_deferred(true);
+        deferred_initialized = true;
+    }
+
+    if (wear_leveling_cache_is_dirty() && timer_elapsed(wear_leveling_last_dirty_time()) > EEPROM_FLUSH_DELAY_MS) {
+        wear_leveling_flush_cache();
+    }
+#endif
 }
 #endif
 

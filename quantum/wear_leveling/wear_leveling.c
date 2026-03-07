@@ -3,6 +3,9 @@
 #include <stdbool.h>
 #include "fnv.h"
 #include "wear_leveling.h"
+#ifdef DEFERRED_EEPROM_SAVE
+#include "timer.h"
+#endif
 #include "wear_leveling_drivers.h"
 #include "wear_leveling_internal.h"
 
@@ -164,6 +167,14 @@ static struct __attribute__((__aligned__(BACKING_STORE_WRITE_SIZE))) {
     uint32_t                                                       write_address;
     bool                                                           unlocked;
 } wear_leveling;
+
+#ifdef DEFERRED_EEPROM_SAVE
+static bool     wl_deferred       = false;
+static bool     wl_cache_dirty    = false;
+static uint32_t wl_dirty_start    = 0;
+static uint32_t wl_dirty_end      = 0;
+static uint16_t wl_last_dirty_time = 0;
+#endif
 
 /**
  * Locking helper: status
@@ -692,6 +703,23 @@ wear_leveling_status_t wear_leveling_write(const uint32_t address, const void *v
     // Update the cache before writing to the backing store -- if we hit the end of the backing store during writes to the log then we'll force a consolidation in-line
     memcpy(&wear_leveling.cache[address], value, length);
 
+#ifdef DEFERRED_EEPROM_SAVE
+    // In deferred mode, only update the cache and track the dirty range.
+    // The actual flash write is postponed until wear_leveling_flush_cache() is called.
+    if (wl_deferred) {
+        if (!wl_cache_dirty) {
+            wl_dirty_start = address;
+            wl_dirty_end   = address + length;
+        } else {
+            if (address < wl_dirty_start) wl_dirty_start = address;
+            if (address + length > wl_dirty_end) wl_dirty_end = address + length;
+        }
+        wl_cache_dirty     = true;
+        wl_last_dirty_time = timer_read();
+        return WEAR_LEVELING_SUCCESS;
+    }
+#endif
+
     // Unlock the backing store
     backing_store_lock_status_t lock_status = wear_leveling_unlock();
     if (lock_status == STATUS_FAILURE) {
@@ -743,6 +771,52 @@ wear_leveling_status_t wear_leveling_read(const uint32_t address, void *value, s
     wl_dump(address, value, length);
     return WEAR_LEVELING_SUCCESS;
 }
+
+#ifdef DEFERRED_EEPROM_SAVE
+void wear_leveling_set_deferred(bool enabled) {
+    wl_deferred = enabled;
+}
+
+bool wear_leveling_cache_is_dirty(void) {
+    return wl_cache_dirty;
+}
+
+uint16_t wear_leveling_last_dirty_time(void) {
+    return wl_last_dirty_time;
+}
+
+wear_leveling_status_t wear_leveling_flush_cache(void) {
+    if (!wl_cache_dirty) return WEAR_LEVELING_SUCCESS;
+
+    uint32_t start = wl_dirty_start;
+    uint32_t len   = wl_dirty_end - wl_dirty_start;
+
+    wl_cache_dirty = false;
+    wl_dirty_start = 0;
+    wl_dirty_end   = 0;
+
+    // Unlock the backing store
+    backing_store_lock_status_t lock_status = wear_leveling_unlock();
+    if (lock_status == STATUS_FAILURE) {
+        wear_leveling_lock();
+        return WEAR_LEVELING_FAILED;
+    }
+
+    // Write the dirty range from cache to the log
+    wear_leveling_status_t status = wear_leveling_write_raw(start, &wear_leveling.cache[start], len);
+    if (status == WEAR_LEVELING_SUCCESS) {
+        status = wear_leveling_consolidate_if_needed();
+    }
+
+    if (lock_status == STATUS_SUCCESS) {
+        if (wear_leveling_lock() == STATUS_FAILURE) {
+            status = WEAR_LEVELING_FAILED;
+        }
+    }
+
+    return status;
+}
+#endif
 
 /**
  * Weak implementation of bulk read, drivers can implement more optimised implementations.

@@ -52,3 +52,28 @@ wear_leveling_status_t wear_leveling_write(uint32_t address, const void* value, 
  * @return Status of the request
  */
 wear_leveling_status_t wear_leveling_read(uint32_t address, void* value, size_t length);
+
+#ifdef DEFERRED_EEPROM_SAVE
+/**
+ * Enables or disables deferred write mode.
+ * When enabled, writes update only the RAM cache; flash is not touched.
+ * Call wear_leveling_flush_cache() to persist deferred changes.
+ */
+void wear_leveling_set_deferred(bool enabled);
+
+/**
+ * Returns true if there are deferred writes pending in cache.
+ */
+bool wear_leveling_cache_is_dirty(void);
+
+/**
+ * Returns the timestamp of the last deferred write.
+ */
+uint16_t wear_leveling_last_dirty_time(void);
+
+/**
+ * Writes any deferred dirty data from cache to the flash log.
+ * Only one log entry is written regardless of how many writes were deferred.
+ */
+wear_leveling_status_t wear_leveling_flush_cache(void);
+#endif
