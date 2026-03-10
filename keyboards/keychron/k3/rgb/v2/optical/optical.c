@@ -23,16 +23,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #ifdef BLUETOOTH_ITON_BT
     #include "iton_bt.h"
     #include "outputselect.h"
-#endif
 
-#ifdef BLUETOOTH_ITON_BT
     #define BT_BATTERY_DURATION_MS 2500
     #define BT_BATTERY_WAIT_QUERY_DURATION_MS 10000
 
     #define KB_BT_PROFILE_MASK  0x3u
 
     // BT module reports: 0x01 = below 30%, 0x02 = 30-70%, 0x04 = above 70%
-    // bt_battery_map_level() converts raw values to 0/1/2 index
     static const rgb_t BATTERY_COLOR_MAP[] = {
         {RGB_RED},
         {RGB_YELLOW},
@@ -143,20 +140,16 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         rgb_matrix_set_color(blink.led_index, r_out, g_out, b_out);
     }
 
-    static inline void bt_profile_save(void) {
-        if (!eeconfig_is_enabled()) {
-            eeconfig_init();
-        }
+    static void bt_profile_save(void) {
+        if (!eeconfig_is_enabled()) return;
         uint32_t kb = eeconfig_read_kb();
         kb &= ~KB_BT_PROFILE_MASK;
         kb |= (bt_profile & KB_BT_PROFILE_MASK);
         eeconfig_update_kb(kb);
     }
 
-    static inline void bt_profile_load(void) {
-        if (!eeconfig_is_enabled()) {
-            eeconfig_init();
-        }
+    static void bt_profile_load(void) {
+        if (!eeconfig_is_enabled()) return;
         uint32_t kb = eeconfig_read_kb();
         uint32_t p  = kb & KB_BT_PROFILE_MASK;
         bt_profile  = (p <= 2) ? p : 0;
@@ -235,47 +228,21 @@ bool process_record_kb(uint16_t keycode, keyrecord_t *record) {
         }
     #endif
 
-    static const uint16_t keycode_map[][2] = {
-        {KC_LOPTN, KC_LOPT},
-        {KC_ROPTN, KC_ROPT},
-        {KC_LCMMD, KC_LCMD},
-        {KC_RCMMD, KC_RCMD},
-        {KC_MISC,  KC_MISSION_CONTROL},
-        {KC_LAUN,  KC_LAUNCHPAD},
-    };
-
-    for (uint8_t i = 0; i < sizeof(keycode_map) / sizeof(keycode_map[0]); i++) {
-        if (keycode == keycode_map[i][0]) {
-            if (record->event.pressed) {
-                register_code(keycode_map[i][1]);
-            } else {
-                unregister_code(keycode_map[i][1]);
-            }
-            return false;
-        }
-    }
-
     switch (keycode) {
+        case KC_LOPTN: keycode = KC_LOPT; break;
+        case KC_ROPTN: keycode = KC_ROPT; break;
+        case KC_LCMMD: keycode = KC_LCMD; break;
+        case KC_RCMMD: keycode = KC_RCMD; break;
+        case KC_MISC:  keycode = KC_MISSION_CONTROL; break;
+        case KC_LAUN:  keycode = KC_LAUNCHPAD; break;
         case KC_SPOT:
-            if (record->event.pressed) {
-                host_consumer_send(0x221);
-            } else {
-                host_consumer_send(0x0);
-            }
+            host_consumer_send(record->event.pressed ? 0x221 : 0x0);
             return false;
         case KC_DICT:
-            if (record->event.pressed) {
-                host_consumer_send(0xCF);
-            } else {
-                host_consumer_send(0x0);
-            }
+            host_consumer_send(record->event.pressed ? 0xCF : 0x0);
             return false;
         case KC_DNDB:
-            if (record->event.pressed) {
-                host_system_send(0x9B);
-            } else {
-                host_system_send(0);
-            }
+            host_system_send(record->event.pressed ? 0x9B : 0);
             return false;
         case KC_MSCR:
             if (record->event.pressed) {
@@ -318,7 +285,13 @@ bool process_record_kb(uint16_t keycode, keyrecord_t *record) {
             }
             return false;
         default:
-            break;
+            return process_record_user(keycode, record);
+    }
+
+    if (record->event.pressed) {
+        register_code(keycode);
+    } else {
+        unregister_code(keycode);
     }
     return process_record_user(keycode, record);
 }
@@ -341,7 +314,7 @@ bool rgb_matrix_indicators_advanced_user(uint8_t led_min, uint8_t led_max) {
     for (uint8_t row = 0; row < MATRIX_ROWS; ++row) {
         for (uint8_t col = 0; col < MATRIX_COLS; ++col) {
             uint8_t index = g_led_config.matrix_co[row][col];
-            if (index >= led_min && index < led_max && index != NO_LED && layer != 0 && layer != 2) {
+            if (index >= led_min && index < led_max && index != NO_LED && layer != MAC_BASE && layer != WIN_BASE) {
                 uint16_t keycode = keymap_key_to_keycode(layer, (keypos_t){col, row});
                 bool is_inactive = (keycode == KC_TRNS || keycode == KC_NO);
 
