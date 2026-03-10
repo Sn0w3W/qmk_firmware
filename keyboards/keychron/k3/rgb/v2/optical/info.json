@@ -48,6 +48,8 @@
             "solid_reactive_simple": true,
             "solid_reactive_multiwide": true,
             "solid_reactive_multinexus": true,
+            "multisplash":true,
+            "solid_multisplash":true,
             "riverflow": true
         },
 		"default": {

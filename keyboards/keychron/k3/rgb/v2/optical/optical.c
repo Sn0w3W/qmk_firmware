@@ -200,6 +200,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 bool process_record_kb(uint16_t keycode, keyrecord_t *record) {
     #ifdef BLUETOOTH_ITON_BT
+        iton_bt_task();
         if (record->event.pressed && flags.dip_switch) {
             switch (keycode) {
                 case BT_PROFILE1:
@@ -209,21 +210,17 @@ bool process_record_kb(uint16_t keycode, keyrecord_t *record) {
                     uint8_t p = keycode - BT_PROFILE1;
                     bt_profile = p;
                     bt_profile_save();
-                    iton_bt_task();
                     iton_bt_switch_profile(p);
                 }
                     return false;
                 case BT_PAIR:
-                    iton_bt_task();
                     iton_bt_enter_pairing();
                     return false;
                 case BT_RESET:
-                    iton_bt_task();
                     iton_bt_reset_pairing();
                     return false;
                 case BT_BATTERY:
                     ev_battery_level_timer = BT_BATTERY_WAIT_QUERY_DURATION_MS;
-                    iton_bt_task();
                     iton_bt_query_battery_level();
                     return false;
                 default:
