@@ -23,10 +23,6 @@
 #    define ITON_BT_BUFFER_LEN 16
 #endif
 
-#ifndef ITON_BT_IRQ_TIMEOUT
-#    define ITON_BT_IRQ_TIMEOUT 50000
-#endif
-
 /**
  * Driver Macros
  */
@@ -216,13 +212,8 @@ void iton_bt_deinit(void) {
 }
 
 void iton_bt_send(uint8_t cmd, uint8_t *data, uint8_t len) {
-    for (volatile uint32_t i = 0; i < ITON_BT_IRQ_TIMEOUT; i++) {
-        if (!readPin(ITON_BT_IRQ_LINE)) break;
-    }
-    if (readPin(ITON_BT_IRQ_LINE)) {
-        writePinLow(ITON_BT_IRQ_LINE);
-        return;
-    }
+    while (readPin(ITON_BT_IRQ_LINE))
+        ;
 
     writePinHigh(ITON_BT_IRQ_LINE);
     iton_bt_buffer[0] = cmd;
@@ -231,13 +222,8 @@ void iton_bt_send(uint8_t cmd, uint8_t *data, uint8_t len) {
 }
 
 void iton_bt_send2(uint8_t cmd, uint8_t b1, uint8_t b2) {
-    for (volatile uint32_t i = 0; i < ITON_BT_IRQ_TIMEOUT; i++) {
-        if (!readPin(ITON_BT_IRQ_LINE)) break;
-    }
-    if (readPin(ITON_BT_IRQ_LINE)) {
-        writePinLow(ITON_BT_IRQ_LINE);
-        return;
-    }
+    while (readPin(ITON_BT_IRQ_LINE))
+        ;
 
     writePinHigh(ITON_BT_IRQ_LINE);
     iton_bt_buffer[0] = cmd;
@@ -247,9 +233,17 @@ void iton_bt_send2(uint8_t cmd, uint8_t b1, uint8_t b2) {
     spiStartSend(&ITON_BT_SPI_PORT, 3, &iton_bt_buffer[0]);
 }
 
-void iton_bt_send_ack(uint8_t b1, uint8_t b2) {
+inline void iton_bt_send_ack(uint8_t b1, uint8_t b2) {
 #ifdef ITON_BT_ENABLE_ACK
-    if (iton_bt_ack_queue.count < ITON_BT_ACK_QUEUE_SIZE) {
+    if (!readPin(ITON_BT_IRQ_LINE)) {
+        writePinHigh(ITON_BT_IRQ_LINE);
+        iton_bt_buffer[0] = control;
+        iton_bt_buffer[1] = b1;
+        iton_bt_buffer[2] = b2;
+        chSysLockFromISR();
+        spiStartSendI(&ITON_BT_SPI_PORT, 3, &iton_bt_buffer[0]);
+        chSysUnlockFromISR();
+    } else if (iton_bt_ack_queue.count < ITON_BT_ACK_QUEUE_SIZE) {
         uint8_t idx = (iton_bt_ack_queue.head + iton_bt_ack_queue.count) % ITON_BT_ACK_QUEUE_SIZE;
         iton_bt_ack_queue.b1[idx] = b1;
         iton_bt_ack_queue.b2[idx] = b2;

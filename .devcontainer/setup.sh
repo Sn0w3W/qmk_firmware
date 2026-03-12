@@ -34,7 +34,12 @@ export PATH="$BIN_DIR:$PATH"
 echo "[*] Installed version:"
 arm-none-eabi-gcc --version | head -n 1
 
-echo "[✔] ARM GCC successfully installed."
+echo "[*] Overriding QMK built-in toolchain (GCC 15.2 has LTO bugs on Cortex-M0)..."
+if [ -d /opt/qmk/bin ]; then
+    ln -sf "$BIN_DIR"/arm-none-eabi-* /opt/qmk/bin/
+fi
+
+echo "[✔] ARM GCC 10.3 successfully installed."
 
 mkdir -p /etc/udev/rules.d
 cp /workspaces/qmk_firmware/util/udev/50-qmk.rules /etc/udev/rules.d/
