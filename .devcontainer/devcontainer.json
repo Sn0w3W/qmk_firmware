@@ -4,9 +4,6 @@
     "name": "QMK CLI",
     // Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
     "image": "ghcr.io/qmk/qmk_cli",
-    "remoteEnv": {
-        "PATH": "/opt/arm-gnu-toolchain/bin:${containerEnv:PATH}"
-    },
     "customizations": {
         "vscode": {
             "extensions": [
