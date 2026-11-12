@@ -63,6 +63,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     #ifdef BT_KEEP_CONNECTION
     // control_bt command to send from the main loop (0 = none). Written from ISR callbacks.
     static volatile uint8_t bt_sleep_cmd = 0;
+    // Sent this long after the connect/disconnect event, not right behind its ACK:
+    // the module can silently drop control frames sent back to back
+    // (observed in SonixQMK PR #485, iton_bt rework).
+    #ifndef BT_SLEEP_CMD_DELAY_MS
+        #define BT_SLEEP_CMD_DELAY_MS 500
+    #endif
     #endif
 
     static struct {
@@ -442,13 +448,23 @@ void housekeeping_task_kb(void) {
     }
     iton_bt_task();
 #    ifdef BT_KEEP_CONNECTION
-    uint8_t sleep_cmd;
+    static uint8_t  sleep_cmd_queued = 0;
+    static uint16_t sleep_cmd_time   = 0;
+    uint8_t         sleep_cmd;
     ATOMIC_BLOCK_FORCEON {
         sleep_cmd    = bt_sleep_cmd;
         bt_sleep_cmd = 0;
     }
-    if (sleep_cmd && flags.dip_switch) {
-        iton_bt_control_bt(sleep_cmd);
+    if (sleep_cmd) {
+        // The latest event wins: a disconnect right after a connect cancels disable_sleep.
+        sleep_cmd_queued = sleep_cmd;
+        sleep_cmd_time   = timer_read();
+    }
+    if (sleep_cmd_queued && timer_elapsed(sleep_cmd_time) > BT_SLEEP_CMD_DELAY_MS) {
+        if (flags.dip_switch) {
+            iton_bt_control_bt(sleep_cmd_queued);
+        }
+        sleep_cmd_queued = 0;
     }
 #    endif
 #endif
