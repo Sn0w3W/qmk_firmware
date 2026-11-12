@@ -26,9 +26,14 @@
 #ifdef BLUETOOTH_ITON_BT
     #define ITON_BT_ENABLE_ACK
     #define ITON_BT_ENABLE_LED_STATE
-    // Keep the BT link while the host is connected (disable_sleep on connect,
-    // enable_sleep on disconnect). Without it the module drops the link on its
-    // own idle timer (stock K3: auto sleep after 10 min in BT mode).
-    // Comment out to get the stock module behaviour back.
-    #define BT_KEEP_CONNECTION
+    // Module sleep, as on the stock K3: after this long without key presses the module
+    // drops the link and sleeps; the next key press wakes it and it reconnects.
+    // sleep_idle_10m, sleep_idle_20m or sleep_idle_30m. Sent with enable_sleep on every
+    // switch to BT mode and every connection. Comment out to send nothing to the module.
+    #define BT_MODULE_SLEEP_IDLE sleep_idle_10m
+    // MCU sleep in BT mode on battery: once the backlight is dark and no key was pressed
+    // for BT_MCU_SLEEP_IDLE_MS, the main loop pauses BT_MCU_SLEEP_TICK_MS per pass and the
+    // core sleeps between interrupts. Key scanning keeps running, so a key press wakes it.
+    // Comment out to keep the main loop running at full speed.
+    #define BT_MCU_SLEEP
 #endif

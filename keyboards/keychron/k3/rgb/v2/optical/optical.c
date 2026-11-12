@@ -24,6 +24,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     #include "iton_bt.h"
     #include "outputselect.h"
     #include "atomic_util.h"
+    #include "usb_util.h"
 
     #define BT_BATTERY_DURATION_MS 2500
     #define BT_BATTERY_WAIT_QUERY_DURATION_MS 10000
@@ -60,14 +61,24 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     // Set from the module's battery notifications (ISR context), handled in housekeeping.
     static volatile bool bt_battery_critical = false;
 
-    #ifdef BT_KEEP_CONNECTION
-    // control_bt command to send from the main loop (0 = none). Written from ISR callbacks.
-    static volatile uint8_t bt_sleep_cmd = 0;
-    // Sent this long after the connect/disconnect event, not right behind its ACK:
-    // the module can silently drop control frames sent back to back
+    #ifdef BT_MODULE_SLEEP_IDLE
+    // Ask the main loop to (re)send the module sleep setup. Written from ISR callbacks.
+    static volatile bool bt_module_cfg_request = false;
+    // Sent this long after the event, and the two frames this far apart: the module
+    // can silently drop control frames sent back to back
     // (observed in SonixQMK PR #485, iton_bt rework).
-    #ifndef BT_SLEEP_CMD_DELAY_MS
-        #define BT_SLEEP_CMD_DELAY_MS 500
+    #ifndef BT_MODULE_CFG_DELAY_MS
+        #define BT_MODULE_CFG_DELAY_MS 500
+    #endif
+    static uint8_t bt_module_cfg_step = 0; // 0 done, 1 idle timeout next, 2 enable_sleep next
+    #endif
+
+    #ifdef BT_MCU_SLEEP
+    #ifndef BT_MCU_SLEEP_IDLE_MS
+        #define BT_MCU_SLEEP_IDLE_MS 5000 // no key press for this long, backlight dark
+    #endif
+    #ifndef BT_MCU_SLEEP_TICK_MS
+        #define BT_MCU_SLEEP_TICK_MS 5 // main loop pause per pass while asleep
     #endif
     #endif
 
@@ -175,9 +186,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
     void iton_bt_connection_successful() {
         bt_blink_queue(RGB_WHITE, false);
-    #ifdef BT_KEEP_CONNECTION
-        // Host is there: keep the link instead of dropping it on the module's idle timer.
-        bt_sleep_cmd = disable_sleep;
+    #ifdef BT_MODULE_SLEEP_IDLE
+        bt_module_cfg_request = true;
     #endif
     }
 
@@ -191,10 +201,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
     void iton_bt_disconnected() {
         bt_blink_queue(RGB_RED, false);
-    #ifdef BT_KEEP_CONNECTION
-        // Host is gone: let the module sleep again so it does not drain the battery.
-        bt_sleep_cmd = enable_sleep;
-    #endif
     }
 
     // Battery about to run out: get pending settings into flash while the
@@ -501,6 +507,33 @@ layer_state_t layer_state_set_kb(layer_state_t state) {
 }
 #endif
 
+#if defined(BLUETOOTH_ITON_BT) && defined(BT_MCU_SLEEP)
+// BT mode has no sleep of its own: the USB suspend loop that would pause the main loop
+// is compiled out (BLUETOOTH_ENABLE sets NO_USB_STARTUP_CHECK), so it spins at 100 %.
+// Pause it while there is nothing to do; any key press ends that within a few passes.
+static bool bt_mcu_can_sleep(void) {
+    if (!flags.dip_switch) return false;        // USB mode
+    if (usb_connected_state()) return false;    // on a host's USB power, not the battery
+    uint32_t idle = last_input_activity_elapsed();
+    if (idle < BT_MCU_SLEEP_IDLE_MS) return false;
+#    ifdef RGB_MATRIX_ENABLE
+    // Animations and BT indicators are rendered by the main loop: wait for the
+    // backlight timeout (plus the margin, for the frame that turns everything off).
+    if (rgb_matrix_is_enabled() && !rgb_matrix_get_suspend_state()) {
+#        if RGB_MATRIX_TIMEOUT > 0
+        if (idle < (uint32_t)RGB_MATRIX_TIMEOUT + BT_MCU_SLEEP_IDLE_MS) return false;
+#        else
+        return false; // the backlight never times out
+#        endif
+    }
+#    endif
+#    ifdef BT_MODULE_SLEEP_IDLE
+    if (bt_module_cfg_request || bt_module_cfg_step) return false;
+#    endif
+    return !iton_bt_task_pending();
+}
+#endif
+
 #if defined(BLUETOOTH_ITON_BT) || defined(DEFERRED_EEPROM_SAVE)
 void housekeeping_task_kb(void) {
 #ifdef BLUETOOTH_ITON_BT
@@ -509,36 +542,26 @@ void housekeeping_task_kb(void) {
         bt_recalc_matrix_indexes();
     }
     iton_bt_task();
-#    ifdef BT_KEEP_CONNECTION
-    static uint8_t  sleep_cmd_queued = 0;
-    static uint16_t sleep_cmd_time   = 0;
-    static bool     idle_timeout_set = false;
-    uint8_t         sleep_cmd;
-    ATOMIC_BLOCK_FORCEON {
-        sleep_cmd    = bt_sleep_cmd;
-        bt_sleep_cmd = 0;
+#    ifdef BT_MODULE_SLEEP_IDLE
+    // Module sleep setup: the idle timeout, then enable_sleep one delay later. Sending
+    // enable_sleep explicitly also undoes a disable_sleep left by older firmware: the
+    // module keeps its settings while it has power, across MCU resets.
+    static uint16_t cfg_time = 0;
+    if (bt_module_cfg_request) {
+        bt_module_cfg_request = false; // a request racing in here only restarts the same setup
+        bt_module_cfg_step    = 1;
+        cfg_time              = timer_read();
     }
-    if (sleep_cmd) {
-        // The latest event wins: a disconnect right after a connect cancels disable_sleep.
-        sleep_cmd_queued = sleep_cmd;
-        sleep_cmd_time   = timer_read();
-        idle_timeout_set = false;
-    }
-    if (sleep_cmd_queued && timer_elapsed(sleep_cmd_time) > BT_SLEEP_CMD_DELAY_MS) {
-        if (sleep_cmd_queued == disable_sleep && !idle_timeout_set) {
-            // disable_sleep alone did not stop the idle disconnect (~2.5 min) on K3.
-            // First set the longest idle timeout the module knows, then send
-            // disable_sleep one delay later (frames must not go out back to back).
-            if (flags.dip_switch) {
-                iton_bt_control(control_power, sleep_idle_30m);
-            }
-            idle_timeout_set = true;
-            sleep_cmd_time   = timer_read();
+    if (bt_module_cfg_step && timer_elapsed(cfg_time) > BT_MODULE_CFG_DELAY_MS) {
+        if (!flags.dip_switch) {
+            bt_module_cfg_step = 0; // switched to USB in the meantime
+        } else if (bt_module_cfg_step == 1) {
+            iton_bt_control(control_power, BT_MODULE_SLEEP_IDLE);
+            bt_module_cfg_step = 2;
+            cfg_time           = timer_read();
         } else {
-            if (flags.dip_switch) {
-                iton_bt_control_bt(sleep_cmd_queued);
-            }
-            sleep_cmd_queued = 0;
+            iton_bt_control_bt(enable_sleep);
+            bt_module_cfg_step = 0;
         }
     }
 #    endif
@@ -560,6 +583,14 @@ void housekeeping_task_kb(void) {
     }
 #    endif
 #endif
+#if defined(BLUETOOTH_ITON_BT) && defined(BT_MCU_SLEEP)
+    if (bt_mcu_can_sleep()) {
+        // The main thread pauses, ChibiOS runs its idle thread, and the SN32 idle hook
+        // puts the core to sleep until the next interrupt (LED/key scan timer every
+        // ~0.46 ms, BT module INT, USB, the end of this pause).
+        wait_ms(BT_MCU_SLEEP_TICK_MS);
+    }
+#endif
 }
 #endif
 
@@ -578,6 +609,10 @@ bool dip_switch_update_user(uint8_t index, bool active) {
                 set_output(OUTPUT_BLUETOOTH);
                 iton_bt_init();
                 bt_profile_load();
+#    ifdef BT_MODULE_SLEEP_IDLE
+                // Also at power-up in BT mode: set up the module even if no connection follows.
+                bt_module_cfg_request = true;
+#    endif
             } else {
                 iton_bt_deinit();
                 set_output(OUTPUT_USB);

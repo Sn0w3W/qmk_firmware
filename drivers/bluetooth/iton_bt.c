@@ -485,6 +485,17 @@ void iton_bt_send_ack(uint8_t b1, uint8_t b2) {
 #endif
 }
 
+// True while iton_bt_task() has something to do, so a keyboard that pauses its main
+// loop to save power must keep it running. Frames in flight need no main loop: the
+// module clocks them out through the ISRs.
+bool iton_bt_task_pending(void) {
+    if (!iton_bt_initialized) return false;
+#ifdef ITON_BT_ENABLE_ACK
+    if (iton_bt_ack_queue.count > 0) return true;
+#endif
+    return iton_bt_tx_retry;
+}
+
 // Main loop: sends ACKs that could not go out from the ISR and retries a frame
 // that an incoming packet cut off.
 void iton_bt_task(void) {

@@ -133,6 +133,7 @@ void iton_bt_send(uint8_t cmd, uint8_t *data, uint8_t len);
 void iton_bt_send2(uint8_t cmd, uint8_t b1, uint8_t b2);
 void iton_bt_send_ack(uint8_t b1, uint8_t b2); // ISR context only
 void iton_bt_task(void);                        // main loop: deferred ACKs and retries
+bool iton_bt_task_pending(void);                // iton_bt_task() has work: don't idle the main loop
 
 void iton_bt_send_fn(bool pressed);
 void iton_bt_send_system(uint16_t data);
