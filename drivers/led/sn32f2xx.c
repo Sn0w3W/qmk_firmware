@@ -606,7 +606,28 @@ void sn32f2xx_init(void) {
 
 void sn32f2xx_flush(void) {
     if (led_state_buf_update_required) {
+#ifdef SN32F2XX_LED_MIN_LOAD_DUTY
+        // Optional workaround for colour channels that drop out when only a few
+        // LEDs are lit (see buglist BUG-004): while anything is lit, every LED
+        // channel gets at least this duty, so the matrix always carries a small
+        // load. When the whole matrix is dark (RGB off, timeout, suspend) nothing
+        // is added, so the board still goes completely dark.
+        bool any_lit = false;
+        for (uint8_t i = 0; i < SN32F2XX_LED_COUNT && !any_lit; i++) {
+            any_lit = led_state_buf[i].r || led_state_buf[i].g || led_state_buf[i].b;
+        }
+        for (uint8_t i = 0; i < SN32F2XX_LED_COUNT; i++) {
+            RGB c = led_state_buf[i];
+            if (any_lit) {
+                if (c.r < SN32F2XX_LED_MIN_LOAD_DUTY) c.r = SN32F2XX_LED_MIN_LOAD_DUTY;
+                if (c.g < SN32F2XX_LED_MIN_LOAD_DUTY) c.g = SN32F2XX_LED_MIN_LOAD_DUTY;
+                if (c.b < SN32F2XX_LED_MIN_LOAD_DUTY) c.b = SN32F2XX_LED_MIN_LOAD_DUTY;
+            }
+            led_state[i] = c;
+        }
+#else
         memcpy(led_state, led_state_buf, sizeof(RGB) * SN32F2XX_LED_COUNT);
+#endif
         led_state_buf_update_required = false;
     }
 }
@@ -617,6 +638,14 @@ void sn32f2xx_set_color(int index, uint8_t r, uint8_t g, uint8_t b) {
     uint8_t color_r = r * SN32F2XX_LED_OUTPUT_LUMINOSITY_R;
     uint8_t color_g = g * SN32F2XX_LED_OUTPUT_LUMINOSITY_G;
     uint8_t color_b = b * SN32F2XX_LED_OUTPUT_LUMINOSITY_B;
+#ifdef SN32F2XX_LED_MIN_ON_DUTY
+    // Optional workaround for short PWM pulses that are too short to light the
+    // higher-Vf green/blue dies (see buglist BUG-004): a channel that is on gets
+    // at least this duty. Channels that are off stay off, so unlit LEDs stay dark.
+    if (color_r && color_r < SN32F2XX_LED_MIN_ON_DUTY) color_r = SN32F2XX_LED_MIN_ON_DUTY;
+    if (color_g && color_g < SN32F2XX_LED_MIN_ON_DUTY) color_g = SN32F2XX_LED_MIN_ON_DUTY;
+    if (color_b && color_b < SN32F2XX_LED_MIN_ON_DUTY) color_b = SN32F2XX_LED_MIN_ON_DUTY;
+#endif
 
 #ifdef UNDERGLOW_RBG
     bool flip_gb = false;

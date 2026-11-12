@@ -23,6 +23,16 @@
 // KC_DNDB sends 0x9B (System Do Not Disturb), so keep the previous range.
 #define SYSTEM_CONTROL_USAGE_MAXIMUM 0x00B7
 
+// 4th row shows red/purple instead of the chosen colour when few LEDs are lit
+// (buglist BUG-004). Both workarounds are off: default LED behaviour. Enable the
+// one that matches the hardware test result:
+// - pink only at low brightness / during fades (short pulses): min duty for lit channels,
+//   unlit LEDs stay dark.
+// #define SN32F2XX_LED_MIN_ON_DUTY 8
+// - pink at any brightness when few LEDs are lit (light load): while anything is lit,
+//   every LED gets this duty (faint glow on unlit keys while awake, dark in sleep).
+// #define SN32F2XX_LED_MIN_LOAD_DUTY 1
+
 #ifdef BLUETOOTH_ITON_BT
     #define ITON_BT_ENABLE_ACK
     #define ITON_BT_ENABLE_LED_STATE
