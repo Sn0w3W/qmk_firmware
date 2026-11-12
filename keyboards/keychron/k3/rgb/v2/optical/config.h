@@ -26,4 +26,9 @@
 #ifdef BLUETOOTH_ITON_BT
     #define ITON_BT_ENABLE_ACK
     #define ITON_BT_ENABLE_LED_STATE
+    // Keep the BT link while the host is connected (disable_sleep on connect,
+    // enable_sleep on disconnect). Without it the module drops the link on its
+    // own idle timer (stock K3: auto sleep after 10 min in BT mode).
+    // Comment out to get the stock module behaviour back.
+    #define BT_KEEP_CONNECTION
 #endif

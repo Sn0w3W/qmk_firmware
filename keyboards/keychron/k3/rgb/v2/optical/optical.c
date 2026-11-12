@@ -23,6 +23,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #ifdef BLUETOOTH_ITON_BT
     #include "iton_bt.h"
     #include "outputselect.h"
+    #include "atomic_util.h"
 
     #define BT_BATTERY_DURATION_MS 2500
     #define BT_BATTERY_WAIT_QUERY_DURATION_MS 10000
@@ -58,6 +59,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
     // Set from the module's battery notifications (ISR context), handled in housekeeping.
     static volatile bool bt_battery_critical = false;
+
+    #ifdef BT_KEEP_CONNECTION
+    // control_bt command to send from the main loop (0 = none). Written from ISR callbacks.
+    static volatile uint8_t bt_sleep_cmd = 0;
+    #endif
 
     static struct {
         uint8_t  color[3];          // текущий цвет анимации
@@ -163,6 +169,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
     void iton_bt_connection_successful() {
         bt_blink_queue(RGB_WHITE, false);
+    #ifdef BT_KEEP_CONNECTION
+        // Host is there: keep the link instead of dropping it on the module's idle timer.
+        bt_sleep_cmd = disable_sleep;
+    #endif
     }
 
     void iton_bt_entered_pairing() {
@@ -175,6 +185,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
     void iton_bt_disconnected() {
         bt_blink_queue(RGB_RED, false);
+    #ifdef BT_KEEP_CONNECTION
+        // Host is gone: let the module sleep again so it does not drain the battery.
+        bt_sleep_cmd = enable_sleep;
+    #endif
     }
 
     // Battery about to run out: get pending settings into flash while the
@@ -427,6 +441,16 @@ void housekeeping_task_kb(void) {
         bt_recalc_matrix_indexes();
     }
     iton_bt_task();
+#    ifdef BT_KEEP_CONNECTION
+    uint8_t sleep_cmd;
+    ATOMIC_BLOCK_FORCEON {
+        sleep_cmd    = bt_sleep_cmd;
+        bt_sleep_cmd = 0;
+    }
+    if (sleep_cmd && flags.dip_switch) {
+        iton_bt_control_bt(sleep_cmd);
+    }
+#    endif
 #endif
 #ifdef DEFERRED_EEPROM_SAVE
     static bool deferred_initialized = false;
