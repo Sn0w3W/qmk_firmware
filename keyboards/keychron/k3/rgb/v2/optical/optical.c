@@ -341,6 +341,7 @@ bool process_record_kb(uint16_t keycode, keyrecord_t *record) {
 // the BT bus waited for the module until ITON_BT_TX_TIMEOUT_MS.
 static uint8_t  diag_reset_flags   = 0;
 static uint16_t diag_boot_time     = 0;
+static bool     diag_boot_shown    = false; // one-shot: timer_elapsed() is 16-bit and wraps every 65.5 s
 static uint16_t diag_seen_timeouts = 0;
 static uint16_t diag_timeout_time  = 0;
 static bool     diag_timeout_flash = false;
@@ -352,7 +353,10 @@ void keyboard_pre_init_kb(void) {
 }
 
 static void diag_indicators(void) {
-    if (timer_elapsed(diag_boot_time) < 10000) {
+    if (!diag_boot_shown && timer_elapsed(diag_boot_time) >= 10000) {
+        diag_boot_shown = true;
+    }
+    if (!diag_boot_shown) {
         uint8_t esc = g_led_config.matrix_co[0][0];
         if (diag_reset_flags & 0x04) {
             rgb_matrix_set_color(esc, RGB_RED); // LVD
