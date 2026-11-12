@@ -79,9 +79,13 @@ enum iton_bt_notification_param {
     query_bt_name      = 0xA1,
 
     // Wake from batt_low_power_shutdown
+    // Stock K3 V1.17: the module woke the MCU; answered with control_bt wake_ack ~10 ms later.
     batt_wake_mcu = 0x0B,
 
-    batt_unknown = 0x08,
+    // Stock K3 V1.17: the MCU turns everything off and sleeps until the module raises INT
+    // (it does not even scan the keys). Meaning inferred from that, not documented.
+    batt_mcu_sleep = 0x08,
+    batt_unknown   = 0x08, // old name
 
     // notif_bluetooth
     bt_connection_success = 0x76,
@@ -124,6 +128,11 @@ void iton_bt_entered_pairing(void);
 void iton_bt_disconnected(void);
 void iton_bt_enters_connection_state(void);
 
+// Module asks the MCU to sleep (batt_mcu_sleep) / wakes it again (batt_wake_mcu).
+// Like the other callbacks they run in the INT interrupt: only set flags there.
+void iton_bt_mcu_sleep_request(void);
+void iton_bt_mcu_wake(void);
+
 /**
  * Driver Functions
  */
@@ -134,6 +143,9 @@ void iton_bt_send2(uint8_t cmd, uint8_t b1, uint8_t b2);
 void iton_bt_send_ack(uint8_t b1, uint8_t b2); // ISR context only
 void iton_bt_task(void);                        // main loop: deferred ACKs and retries
 bool iton_bt_task_pending(void);                // iton_bt_task() has work: don't idle the main loop
+bool iton_bt_running(void);                     // between iton_bt_init() and iton_bt_deinit()
+bool iton_bt_flush(void);                       // wait (up to ITON_BT_TX_TIMEOUT_MS) for the last frame to go out
+void iton_bt_set_apple_fn(bool pressed);        // Apple Fn (Globe) byte of the keyboard report, sent at once
 
 void iton_bt_send_fn(bool pressed);
 void iton_bt_send_system(uint16_t data);

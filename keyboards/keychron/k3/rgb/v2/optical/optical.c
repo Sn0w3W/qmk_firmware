@@ -31,7 +31,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     #define KB_SLEEP_OK         0
     #define KB_SLEEP_ACTIVE     1 // a key was pressed within KB_IDLE_SLEEP_IDLE_MS
     #define KB_SLEEP_LIT        2 // the backlight is still on
-    #define KB_SLEEP_BT_CFG     3 // the module sleep setup is still being sent
+    #define KB_SLEEP_BT_CFG     3 // control frames for the module are still queued
     #define KB_SLEEP_BT_PENDING 4 // the BT driver has ACKs or a retry for the main loop
 #endif
 
@@ -75,16 +75,92 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     // Set from the module's battery notifications (ISR context), handled in housekeeping.
     static volatile bool bt_battery_critical = false;
 
-    #ifdef BT_MODULE_SLEEP_IDLE
-    // Ask the main loop to (re)send the module sleep setup. Written from ISR callbacks.
-    static volatile bool bt_module_cfg_request = false;
-    // Sent this long after the event, and the two frames this far apart: the module
-    // can silently drop control frames sent back to back
-    // (observed in SonixQMK PR #485, iton_bt rework).
-    #ifndef BT_MODULE_CFG_DELAY_MS
-        #define BT_MODULE_CFG_DELAY_MS 500
+    // ---- Talking to the module the way the stock K3 V1.17 does ----
+    // Control frames (A6 ...) are queued and sent from the main loop, at least
+    // BT_MODULE_CMD_GAP_MS apart (the module can silently drop control frames sent back to
+    // back, SonixQMK PR #485) and not before BT_MODULE_BOOT_DELAY_MS after power-up (the
+    // stock sends nothing to the module for its first 2 s).
+    #ifndef BT_MODULE_CMD_GAP_MS
+        #define BT_MODULE_CMD_GAP_MS 500
     #endif
-    static uint8_t bt_module_cfg_step = 0; // 0 done, 1 idle timeout next, 2 enable_sleep next
+    #ifndef BT_MODULE_BOOT_DELAY_MS
+        #define BT_MODULE_BOOT_DELAY_MS 2000
+    #endif
+    #define BT_CMDQ_LEN 6
+    static struct {
+        uint8_t  cmd[BT_CMDQ_LEN];
+        uint8_t  param[BT_CMDQ_LEN];
+        uint8_t  head;
+        uint8_t  count;
+        uint32_t last_sent;    // when the last control frame went out
+        bool     sent_once;
+        bool     deinit_after; // USB mode: stop the driver once the queue is empty
+    } bt_cmdq = {0};
+
+    // Module events. The driver calls back from the INT interrupt; housekeeping acts.
+    static volatile bool bt_evt_connected = false; // connected: (re)send the sleep setup
+    static volatile bool bt_evt_pairing   = false; // the module entered pairing
+    static volatile bool bt_module_hold   = false; // batt_mcu_sleep, until the module wakes us
+    static volatile bool bt_low_battery   = false; // batt_voltage_low, until batt_exit_low_battery_mode
+
+    // Pairing: like the stock, up to 3 enter_pairing frames ~300 ms apart (here: at least
+    // BT_MODULE_CMD_GAP_MS) until the module reports pairing mode.
+    #define BT_PAIR_TRIES    3
+    #define BT_PAIR_RETRY_MS 300
+    static uint8_t bt_pair_tries = 0; // frames queued in the current attempt, 0 = none
+    // The stock stops its sleep countdown while pairing, for up to 180 s.
+    #define BT_PAIRING_WINDOW_MS 180000
+    static bool     bt_pairing      = false;
+    static uint32_t bt_pairing_time = 0;
+
+    static void bt_cmd_mark_sent(void) {
+        bt_cmdq.last_sent = timer_read32();
+        bt_cmdq.sent_once = true;
+    }
+
+    static bool bt_cmd_waiting(uint8_t cmd, uint8_t param) {
+        for (uint8_t i = 0; i < bt_cmdq.count; i++) {
+            uint8_t idx = (bt_cmdq.head + i) % BT_CMDQ_LEN;
+            if (bt_cmdq.cmd[idx] == cmd && bt_cmdq.param[idx] == param) return true;
+        }
+        return false;
+    }
+
+    // Main loop only. A frame already waiting is not queued twice; a full queue drops it.
+    static void bt_cmd_push(uint8_t cmd, uint8_t param) {
+        if (bt_cmd_waiting(cmd, param) || bt_cmdq.count == BT_CMDQ_LEN) return;
+        uint8_t idx        = (bt_cmdq.head + bt_cmdq.count) % BT_CMDQ_LEN;
+        bt_cmdq.cmd[idx]   = cmd;
+        bt_cmdq.param[idx] = param;
+        bt_cmdq.count++;
+    }
+
+    static void bt_cmd_clear(void) {
+        bt_cmdq.head         = 0;
+        bt_cmdq.count        = 0;
+        bt_cmdq.deinit_after = false;
+        bt_pair_tries        = 0;
+    }
+
+    static void bt_cmd_task(void) {
+        if (!bt_cmdq.count) return;
+        if (bt_cmdq.sent_once && timer_elapsed32(bt_cmdq.last_sent) < BT_MODULE_CMD_GAP_MS) return;
+        if (timer_read32() < BT_MODULE_BOOT_DELAY_MS) return;
+        uint8_t idx  = bt_cmdq.head;
+        bt_cmdq.head = (bt_cmdq.head + 1) % BT_CMDQ_LEN;
+        bt_cmdq.count--;
+        iton_bt_control(bt_cmdq.cmd[idx], bt_cmdq.param[idx]);
+        bt_cmd_mark_sent();
+    }
+
+    #ifdef BT_MODULE_SLEEP_IDLE
+    // Our addition (the stock sends these only on its Fn+S+... combos): the idle timeout,
+    // then enable_sleep, which also undoes a disable_sleep left by older firmware (the
+    // module keeps its settings while it has power, across MCU resets).
+    static void bt_module_sleep_setup(void) {
+        bt_cmd_push(control_power, BT_MODULE_SLEEP_IDLE);
+        bt_cmd_push(control_bt, enable_sleep);
+    }
     #endif
 
 
@@ -190,29 +266,50 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         bt_profile  = (p <= 2) ? p : 0;
     }
 
+    // All module callbacks run in the INT interrupt: flags only. Any of these packets
+    // also means the module is awake, which ends a batt_mcu_sleep hold.
     void iton_bt_connection_successful() {
         bt_blink_queue(RGB_WHITE, false);
-    #ifdef BT_MODULE_SLEEP_IDLE
-        bt_module_cfg_request = true;
-    #endif
+        bt_evt_connected = true;
+        bt_module_hold   = false;
     }
 
     void iton_bt_entered_pairing() {
         bt_blink_queue(RGB_BLUE, true);
+        bt_evt_pairing = true;
+        bt_module_hold = false;
     }
 
     void iton_bt_enters_connection_state() {
         bt_blink_queue(RGB_BLUE, true);
+        bt_module_hold = false;
     }
 
     void iton_bt_disconnected() {
         bt_blink_queue(RGB_RED, false);
+        bt_module_hold = false;
+    }
+
+    // Stock: on batt_mcu_sleep the MCU turns everything off and waits for the module.
+    // Here the backlight goes off and the MCU sleeps between interrupts until the module
+    // sends anything; keys are still scanned and sent (the stock does not scan them).
+    void iton_bt_mcu_sleep_request(void) {
+        bt_module_hold = true;
+    }
+
+    void iton_bt_mcu_wake(void) {
+        bt_module_hold = false;
     }
 
     // Battery about to run out: get pending settings into flash while the
     // supply is still good (flash writes at low voltage can corrupt the store).
     void iton_bt_battery_voltage_low(void) {
         bt_battery_critical = true;
+        bt_low_battery      = true;
+    }
+
+    void iton_bt_battery_exit_low_battery_mode(void) {
+        bt_low_battery = false;
     }
 
     void iton_bt_battery_low_power_shutdown(void) {
@@ -220,6 +317,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     }
 
     void iton_bt_battery_level(uint8_t level) {
+        bt_module_hold = false;
         // 0x01 -> 0, 0x02 -> 1, 0x04 -> 2
         if (level == 0x01)      battery_level = 0;
         else if (level == 0x02) battery_level = 1;
@@ -259,18 +357,20 @@ bool process_record_kb(uint16_t keycode, keyrecord_t *record) {
                     uint8_t p = keycode - BT_PROFILE1;
                     bt_profile = p;
                     bt_profile_save();
-                    iton_bt_switch_profile(p);
+                    bt_cmd_push(control_bt, switch_profile + p);
                 }
                     return false;
                 case BT_PAIR:
-                    iton_bt_enter_pairing();
+                    bt_pairing    = false; // wait for the module to report it again
+                    bt_pair_tries = 1;
+                    bt_cmd_push(control_bt, enter_pairing);
                     return false;
                 case BT_RESET:
-                    iton_bt_reset_pairing();
+                    bt_cmd_push(control_bt, reset_pairing);
                     return false;
                 case BT_BATTERY:
                     ev_battery_level_timer = BT_BATTERY_WAIT_QUERY_DURATION_MS;
-                    iton_bt_query_battery_level();
+                    bt_cmd_push(control_bt, query_battery_level);
                     return false;
                 default:
                     break;
@@ -365,7 +465,7 @@ static bool     diag_timeout_flash = false;
 //   per whole minute (all twelve: 12 min or more). The core sleeps in those pauses
 //   except while an interrupt runs, so the share is an upper bound of its sleep time;
 // - it should have slept (no input, backlight dark) but never did: Esc purple, and red
-//   F1 if the module sleep setup was in the way, red F2 if the BT driver was busy.
+//   F1 if queued module commands were in the way, red F2 if the BT driver was busy.
 // Nothing at all: the idle period ended before the backlight went dark.
 static bool     diag_sleeping       = false; // an idle period with pauses is in progress
 static uint8_t  diag_block_seen     = 0;     // bit 0 KB_SLEEP_BT_CFG, bit 1 KB_SLEEP_BT_PENDING
@@ -572,13 +672,16 @@ bool shutdown_kb(bool jump_to_bootloader) {
 
 #ifdef BLUETOOTH_ITON_BT
 // bluetooth_init() runs after dip_switch_init() and starts the BT driver
-// unconditionally. In USB mode stop it again, exactly like a runtime switch to USB does.
+// unconditionally. In USB mode the stock tells the module mode_usb 2 s after power-up:
+// queue it and stop the driver once it is out (housekeeping).
 void keyboard_post_init_kb(void) {
 #    ifdef K3_DIAG
     diag_boot_time = timer_read();
 #    endif
     if (!flags.dip_switch) {
-        iton_bt_deinit();
+        bt_cmd_clear();
+        bt_cmd_push(control_usb, mode_usb);
+        bt_cmdq.deinit_after = true;
     }
     keyboard_post_init_user();
 }
@@ -589,8 +692,48 @@ layer_state_t layer_state_set_kb(layer_state_t state) {
     if (layer_state_cmp(state, MAC_FN) || layer_state_cmp(state, WIN_FN)) {
         bt_indexes_dirty = true;
     }
+#    ifdef BT_APPLE_FN
+    // Stock: in Mac mode the Fn key also sets the Apple Fn (Globe) byte of the keyboard
+    // report. MAC_FN is only reachable from the Mac layer. No-op while the driver is off.
+    iton_bt_set_apple_fn(flags.dip_switch && layer_state_cmp(state, MAC_FN));
+#    endif
     return layer_state_set_user(state);
 }
+#endif
+
+#ifdef BLUETOOTH_ITON_BT
+static void kb_set_forced_dark(bool dark) {
+#    if defined(RGB_MATRIX_ENABLE) && defined(RGB_MATRIX_SLEEP)
+    static bool forced = false;
+    if (dark == forced) return;
+    forced = dark;
+    rgb_matrix_set_suspend_state(dark); // without RGB_MATRIX_SLEEP this does nothing
+#    else
+    (void)dark;
+#    endif
+}
+
+#    ifdef BT_STATUS_LED_PIN
+// Stock: a separate LED on P1.12 (B12), lit for the first 2 s after power-up and blinking
+// 1 s on / 1 s off while the module reports low battery; off while the MCU sleeps.
+// What it is physically is not known. Active high assumed (the stock clears it before
+// sleeping).
+static void bt_status_led_task(bool sleeping) {
+    static bool ready = false;
+    if (!ready) {
+        gpio_set_pin_output(BT_STATUS_LED_PIN);
+        ready = true;
+    }
+    uint32_t now = timer_read32();
+    bool     on  = false;
+    if (now < 2000) {
+        on = true;
+    } else if (bt_low_battery && flags.dip_switch && !sleeping) {
+        on = (now / 1000) & 1;
+    }
+    gpio_write_pin(BT_STATUS_LED_PIN, on);
+}
+#    endif
 #endif
 
 #ifdef KB_IDLE_SLEEP
@@ -601,7 +744,13 @@ layer_state_t layer_state_set_kb(layer_state_t state) {
 // ends that within a few passes.
 static uint8_t kb_sleep_check(void) {
     uint32_t idle = last_input_activity_elapsed();
-    if (idle < KB_IDLE_SLEEP_IDLE_MS) return KB_SLEEP_ACTIVE;
+#    ifdef BLUETOOTH_ITON_BT
+    // The module asked the MCU to sleep (batt_mcu_sleep): key presses do not keep it awake.
+    bool hold = bt_module_hold;
+#    else
+    bool hold = false;
+#    endif
+    if (!hold && idle < KB_IDLE_SLEEP_IDLE_MS) return KB_SLEEP_ACTIVE;
 #    ifdef RGB_MATRIX_ENABLE
     // Animations and BT indicators are rendered by the main loop: wait for the
     // backlight timeout (plus the margin, for the frame that turns everything off).
@@ -614,9 +763,7 @@ static uint8_t kb_sleep_check(void) {
     }
 #    endif
 #    ifdef BLUETOOTH_ITON_BT
-#        ifdef BT_MODULE_SLEEP_IDLE
-    if (bt_module_cfg_request || bt_module_cfg_step) return KB_SLEEP_BT_CFG;
-#        endif
+    if (bt_cmdq.count || bt_cmdq.deinit_after || bt_pair_tries || bt_evt_connected || bt_evt_pairing) return KB_SLEEP_BT_CFG;
     if (iton_bt_task_pending()) return KB_SLEEP_BT_PENDING; // never in USB mode: the driver is stopped
 #    endif
     return KB_SLEEP_OK;
@@ -631,29 +778,47 @@ void housekeeping_task_kb(void) {
         bt_recalc_matrix_indexes();
     }
     iton_bt_task();
-#    ifdef BT_MODULE_SLEEP_IDLE
-    // Module sleep setup: the idle timeout, then enable_sleep one delay later. Sending
-    // enable_sleep explicitly also undoes a disable_sleep left by older firmware: the
-    // module keeps its settings while it has power, across MCU resets.
-    static uint16_t cfg_time = 0;
-    if (bt_module_cfg_request) {
-        bt_module_cfg_request = false; // a request racing in here only restarts the same setup
-        bt_module_cfg_step    = 1;
-        cfg_time              = timer_read();
+
+    if (bt_evt_pairing) {
+        bt_evt_pairing  = false;
+        bt_pairing      = true;
+        bt_pairing_time = timer_read32();
     }
-    if (bt_module_cfg_step && timer_elapsed(cfg_time) > BT_MODULE_CFG_DELAY_MS) {
-        if (!flags.dip_switch) {
-            bt_module_cfg_step = 0; // switched to USB in the meantime
-        } else if (bt_module_cfg_step == 1) {
-            iton_bt_control(control_power, BT_MODULE_SLEEP_IDLE);
-            bt_module_cfg_step = 2;
-            cfg_time           = timer_read();
-        } else {
-            iton_bt_control_bt(enable_sleep);
-            bt_module_cfg_step = 0;
+    if (bt_evt_connected) {
+        bt_evt_connected = false;
+        bt_pairing       = false;
+#    ifdef BT_MODULE_SLEEP_IDLE
+        if (flags.dip_switch) bt_module_sleep_setup();
+#    endif
+    }
+    if (bt_pairing && timer_elapsed32(bt_pairing_time) > BT_PAIRING_WINDOW_MS) bt_pairing = false;
+
+    // Pairing retries until the module reports pairing mode.
+    if (bt_pair_tries) {
+        if (bt_pairing || bt_pair_tries >= BT_PAIR_TRIES) {
+            bt_pair_tries = 0;
+        } else if (!bt_cmd_waiting(control_bt, enter_pairing) && timer_elapsed32(bt_cmdq.last_sent) >= BT_PAIR_RETRY_MS) {
+            bt_cmd_push(control_bt, enter_pairing);
+            bt_pair_tries++;
         }
     }
+
+    bt_cmd_task();
+    if (bt_cmdq.deinit_after && !bt_cmdq.count) {
+        iton_bt_flush(); // let mode_usb reach the module before the bus stops
+        iton_bt_deinit();
+        bt_cmdq.deinit_after = false;
+    }
+
+    // Backlight forced off through the rgb_matrix suspend state, as the stock does:
+    // - the module asked the MCU to sleep (batt_mcu_sleep), until it sends anything;
+    // - BT mode, no connection, not pairing and no key press for BT_DISCONNECTED_DARK_MS
+    //   (the stock sleeps 40 s after a disconnect or a power-up without connection).
+    bool dark = bt_module_hold;
+#    ifdef BT_DISCONNECTED_DARK_MS
+    if (flags.dip_switch && !iton_bt_is_connected && !bt_pairing && last_input_activity_elapsed() >= BT_DISCONNECTED_DARK_MS) dark = true;
 #    endif
+    kb_set_forced_dark(dark);
 #endif
 #ifdef DEFERRED_EEPROM_SAVE
     static bool deferred_initialized = false;
@@ -674,6 +839,15 @@ void housekeeping_task_kb(void) {
 #endif
 #ifdef KB_IDLE_SLEEP
     uint8_t sleep_block = kb_sleep_check();
+#endif
+#if defined(BLUETOOTH_ITON_BT) && defined(BT_STATUS_LED_PIN)
+#    ifdef KB_IDLE_SLEEP
+    bt_status_led_task(sleep_block == KB_SLEEP_OK);
+#    else
+    bt_status_led_task(false);
+#    endif
+#endif
+#ifdef KB_IDLE_SLEEP
     if (sleep_block == KB_SLEEP_OK) {
 #    ifdef K3_DIAG
         uint32_t pause_start = timer_read32();
@@ -709,11 +883,25 @@ bool dip_switch_update_user(uint8_t index, bool active) {
                 set_output(OUTPUT_BLUETOOTH);
                 iton_bt_init();
                 bt_profile_load();
+                bt_cmd_clear();
+                // Stock: on every switch to BT, power-up included (after its 2 s delay),
+                // select the saved profile again.
+                bt_cmd_push(control_bt, switch_profile + bt_profile);
 #    ifdef BT_MODULE_SLEEP_IDLE
-                // Also at power-up in BT mode: set up the module even if no connection follows.
-                bt_module_cfg_request = true;
+                bt_module_sleep_setup();
 #    endif
             } else {
+                bt_cmd_clear();
+                // Stock: tell the module mode_usb before starting USB. At power-up the
+                // driver is not running yet; keyboard_post_init_kb() queues it instead.
+                if (iton_bt_running()) {
+                    while (bt_cmdq.sent_once && timer_elapsed32(bt_cmdq.last_sent) < BT_MODULE_CMD_GAP_MS) {
+                        wait_ms(1);
+                    }
+                    iton_bt_mode_usb();
+                    bt_cmd_mark_sent();
+                    iton_bt_flush();
+                }
                 iton_bt_deinit();
                 set_output(OUTPUT_USB);
             }

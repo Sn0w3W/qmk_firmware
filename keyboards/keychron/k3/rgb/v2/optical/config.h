@@ -40,6 +40,19 @@
     // sleep_idle_10m, sleep_idle_20m or sleep_idle_30m. Sent with enable_sleep on every
     // switch to BT mode and every connection. Comment out to send nothing to the module.
     #define BT_MODULE_SLEEP_IDLE sleep_idle_10m
+    // Like the stock: in BT mode without a connection (and not pairing), the backlight
+    // goes off after this long without a key press, and the MCU sleep follows. The stock
+    // uses 40 s after a disconnect or a power-up. Comment out to keep only the normal
+    // backlight timeout.
+    #define BT_DISCONNECTED_DARK_MS 40000
+    // Separate LED the stock drives on P1.12: on for 2 s after power-up, blinking while
+    // the battery is low. What it lights on this board is not known. Comment out to leave
+    // B12 untouched.
+    #define BT_STATUS_LED_PIN B12
+    // Like the stock, send the Fn key as the Apple Fn (Globe) byte in Mac mode over BT.
+    // macOS then sees Globe held with Fn: Globe shortcuts, and a lone Fn press triggers
+    // the "Press Globe key to" action (input source, emoji, dictation). Off for now.
+    // #define BT_APPLE_FN
 #endif
 
 // MCU sleep in USB and BT mode, on battery or USB power alike: once the backlight is dark

@@ -87,3 +87,11 @@ void bluetooth_send_consumer(uint16_t usage) {
     iton_bt_send_consumer(usage);
 #endif
 }
+
+#if defined(BLUETOOTH_ITON_BT)
+// System Control (Power Down / Sleep / Wake Up) over BT. Other drivers keep the weak
+// no-op in bluetooth.c.
+void bluetooth_send_system(uint16_t usage) {
+    iton_bt_send_system(usage);
+}
+#endif

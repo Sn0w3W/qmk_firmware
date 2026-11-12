@@ -54,6 +54,8 @@ __attribute__((weak)) void iton_bt_connection_successful(void) {}
 __attribute__((weak)) void iton_bt_entered_pairing(void) {}
 __attribute__((weak)) void iton_bt_disconnected(void) {}
 __attribute__((weak)) void iton_bt_enters_connection_state(void) {}
+__attribute__((weak)) void iton_bt_mcu_sleep_request(void) {}
+__attribute__((weak)) void iton_bt_mcu_wake(void) {}
 
 /**
  * Driver variables
@@ -69,6 +71,10 @@ volatile iton_bt_stats_t iton_bt_stats = {0};
 static uint8_t iton_bt_rx_buffer[ITON_BT_BUFFER_LEN];
 static uint8_t iton_bt_tx_buffer[ITON_BT_BUFFER_LEN];
 uint8_t        iton_bt_send_kb_last_key = 0x00;
+// Payload of the last keyboard frame (report_hid), as the stock K3 sends it: modifiers,
+// reserved, 5 keys, Apple Fn. Kept so a change of the Fn byte alone can be sent.
+static uint8_t iton_bt_kb_payload[8];
+static uint8_t iton_bt_apple_fn = 0;
 
 static bool iton_bt_initialized = false;
 
@@ -281,13 +287,14 @@ static inline void iton_bt_rx_battery_notif(uint8_t data) {
 #    elif defined(ITON_BT_WAKE_ACK_ACTIVE)
             iton_bt_wake_ack_request = true; // sent by iton_bt_task() after the delay
 #    endif
+            iton_bt_mcu_wake();
             break;
-        case batt_unknown:
-            // 0x08. The stock K3 firmware answers nothing and sleeps until the module
-            // raises INT (meaning not confirmed). The legacy ACK mode answers unknown_ack.
+        case batt_mcu_sleep:
+            // The stock K3 firmware answers nothing; the legacy ACK mode answers unknown_ack.
 #    ifdef ITON_BT_ENABLE_ACK
             iton_bt_send_ack(control_bt, unknown_ack);
 #    endif
+            iton_bt_mcu_sleep_request();
             break;
         case query_working_mode:
             break;
@@ -387,6 +394,8 @@ void iton_bt_init(void) {
     iton_bt_tx_active        = false;
     iton_bt_tx_retry         = false;
     iton_bt_send_kb_last_key = 0x00;
+    memset(iton_bt_kb_payload, 0, sizeof(iton_bt_kb_payload));
+    iton_bt_kb_payload[7] = iton_bt_apple_fn;
 #ifdef ITON_BT_ENABLE_ACK
     iton_bt_ack_active      = false;
     iton_bt_ack_queue.head  = 0;
@@ -525,6 +534,17 @@ bool iton_bt_task_pending(void) {
     return iton_bt_tx_retry;
 }
 
+bool iton_bt_running(void) {
+    return iton_bt_initialized;
+}
+
+// For a frame that must reach the module before the driver stops (e.g. mode_usb).
+bool iton_bt_flush(void) {
+    if (!iton_bt_bus_acquire()) return false;
+    chSysUnlock();
+    return true;
+}
+
 // Main loop: sends ACKs that could not go out from the ISR and retries a frame
 // that an incoming packet cut off.
 void iton_bt_task(void) {
@@ -571,34 +591,76 @@ void iton_bt_task(void) {
     }
 }
 
+// report_fn (0xA5). The stock K3 V1.17 never sends it (its flag is never set); when it
+// would, the value is 0 or 3 (the stock K4 sends 0x03 for Fn held, SonixQMK PR #485).
+// Upstream sent 0xA3. Not used by QMK at the moment.
 void iton_bt_send_fn(bool pressed) {
-    uint8_t data = pressed ? 0xA3 : 0x00;
+    uint8_t data = pressed ? 0x03 : 0x00;
 
     iton_bt_send(report_fn, &data, 1);
 }
 
-void iton_bt_send_system(uint16_t data) {
-    iton_bt_send(report_system, (uint8_t *)&data, 1);
+// report_system (0xA4): one bitmap byte, as the stock K3 V1.17 sends it (its table at
+// 0x7CDA): 0x01 Power Down, 0x02 Sleep, 0x04 Wake Up, 0x00 released. Other System
+// Control usages (e.g. Do Not Disturb 0x9B) have no bit and are not sent.
+void iton_bt_send_system(uint16_t usage) {
+    uint8_t bits;
+    switch (usage) {
+        case 0:
+            bits = 0x00;
+            break;
+        case SYSTEM_POWER_DOWN:
+            bits = 0x01;
+            break;
+        case SYSTEM_SLEEP:
+            bits = 0x02;
+            break;
+        case SYSTEM_WAKE_UP:
+            bits = 0x04;
+            break;
+        default:
+            return;
+    }
+    iton_bt_send(report_system, &bits, 1);
 }
 
+// report_consumer (0xA3): the 16-bit usage, big-endian; 0 when released.
 void iton_bt_send_consumer(uint16_t data) {
     iton_bt_send2(report_consumer, HIGH_BITS(data), LOW_BITS(data));
 }
 
+// report_hid (0xA1), as the stock K3 V1.17 sends it: modifiers, reserved, 5 keys and the
+// Apple Fn byte (1 = Fn held in Mac mode). The 6th key goes in a report_nkro (0xA2)
+// bitmap of usages 0x00-0x77, like the stock does for every key past the 5th. This used
+// to put the 6th key into the Apple Fn byte.
 void iton_bt_send_keyboard(report_keyboard_t *report) {
-    // iton module only reads 5 of the keys in the hid report
-    // so we send the last key as an nkro report.
-    if (report->keys[5] != iton_bt_send_kb_last_key) {
-        uint8_t nkro_report[15] = {0};
-        iton_bt_send_kb_last_key = report->keys[5];
+    iton_bt_kb_payload[0] = report->mods;
+    iton_bt_kb_payload[1] = 0;
+    memcpy(&iton_bt_kb_payload[2], report->keys, 5);
+    iton_bt_kb_payload[7] = iton_bt_apple_fn;
 
-        // The 15-byte bitmap covers keycodes 0x00-0x77 only; anything above that
-        // cannot be expressed here, so fall through to the plain HID report.
-        if ((report->keys[5] >> 3) < sizeof(nkro_report)) {
-            nkro_report[report->keys[5] >> 3] |= (1 << (report->keys[5] & 7));
-            return iton_bt_send(report_nkro, &nkro_report[0], 15);
+    uint8_t key6 = report->keys[5];
+    if (key6 != iton_bt_send_kb_last_key) {
+        iton_bt_send_kb_last_key = key6;
+        // In 6KRO only the 6th slot changed: send just the bitmap. Keycodes from 0x78 on
+        // have no bit in it; such a 6th key is dropped (the stock has the same limit).
+        if ((key6 >> 3) < 15) {
+            uint8_t nkro_report[15] = {0};
+            if (key6) nkro_report[key6 >> 3] |= (1 << (key6 & 7));
+            iton_bt_send(report_nkro, &nkro_report[0], 15);
+            return;
         }
     }
 
-    iton_bt_send(report_hid, &report->mods, 8);
+    iton_bt_send(report_hid, iton_bt_kb_payload, 8);
+}
+
+// The stock K3 sets the Apple Fn byte while Fn is held in Mac mode. The layer key alone
+// changes no HID report, so resend the last keyboard frame with the new byte.
+void iton_bt_set_apple_fn(bool pressed) {
+    uint8_t value = pressed ? 1 : 0;
+    if (value == iton_bt_apple_fn) return;
+    iton_bt_apple_fn      = value;
+    iton_bt_kb_payload[7] = value;
+    iton_bt_send(report_hid, iton_bt_kb_payload, 8);
 }
