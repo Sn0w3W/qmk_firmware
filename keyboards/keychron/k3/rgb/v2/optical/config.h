@@ -23,15 +23,16 @@
 // KC_DNDB sends 0x9B (System Do Not Disturb), so keep the previous range.
 #define SYSTEM_CONTROL_USAGE_MAXIMUM 0x00B7
 
-// 4th row shows red/purple instead of the chosen colour when few LEDs are lit
-// (buglist BUG-004). Both workarounds are off: default LED behaviour. Enable the
-// one that matches the hardware test result:
-// - pink only at low brightness / during fades (short pulses): min duty for lit channels,
-//   unlit LEDs stay dark.
+// Green/blue drop out (red/purple instead of the chosen colour, worst on the lower
+// rows) when only a few LEDs are lit, e.g. reactive effects on a dark board
+// (buglist BUG-004). Verified on hardware: a small constant load fixes it. While
+// anything is lit, every LED channel gets at least this duty (faint glow on unlit
+// keys); when the whole matrix is dark (timeout, RGB off) nothing is added.
+#ifndef SN32F2XX_LED_MIN_LOAD_DUTY
+#    define SN32F2XX_LED_MIN_LOAD_DUTY 1 // 0 disables it
+#endif
+// Alternative for short-pulse drop-outs, not needed on K3:
 // #define SN32F2XX_LED_MIN_ON_DUTY 8
-// - pink at any brightness when few LEDs are lit (light load): while anything is lit,
-//   every LED gets this duty (faint glow on unlit keys while awake, dark in sleep).
-// #define SN32F2XX_LED_MIN_LOAD_DUTY 1
 
 #ifdef BLUETOOTH_ITON_BT
     #define ITON_BT_ENABLE_ACK

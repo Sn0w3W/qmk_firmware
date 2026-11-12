@@ -18,9 +18,6 @@
 #include "matrix.h"
 #include "rgb_matrix.h"
 #include "sn32f2xx.h"
-#ifdef SN32F2XX_MATRIX_UNSELECT_DELAY_FIX
-#    include "wait.h"
-#endif
 
 #define ROWS_PER_HAND (MATRIX_ROWS)
 
@@ -98,7 +95,13 @@ static volatile bool matrix_locked  = false;     // matrix update check
 static volatile bool matrix_scanned = false;
 #endif // SHARED MATRIX
 static const uint32_t periodticks                               = RGB_MATRIX_MAXIMUM_BRIGHTNESS;
+#ifdef SN32F2XX_PWM_FREQUENCY
+// Experimental override of the PWM tick rate (one LED slot = 255 ticks). Pick a value
+// that divides the core clock, e.g. 1200000 on a 48 MHz part (slot ~213 us).
+static const uint32_t freq = SN32F2XX_PWM_FREQUENCY;
+#else
 static const uint32_t freq                                      = (RGB_MATRIX_HUE_STEP * RGB_MATRIX_SAT_STEP * RGB_MATRIX_VAL_STEP * RGB_MATRIX_SPD_STEP * RGB_MATRIX_LED_PROCESS_LIMIT);
+#endif
 static const pin_t    led_row_pins[SN32F2XX_RGB_MATRIX_ROWS_HW] = SN32F2XX_RGB_MATRIX_ROW_PINS; // We expect a R,B,G order here
 static const pin_t    led_col_pins[SN32F2XX_RGB_MATRIX_COLS]    = SN32F2XX_RGB_MATRIX_COL_PINS;
 static RGB            led_state[SN32F2XX_LED_COUNT];     // led state buffer
@@ -106,23 +109,29 @@ static RGB            led_state_buf[SN32F2XX_LED_COUNT]; // led state buffer
 bool                  led_state_buf_update_required = false;
 // Matrix positions without an LED (NO_LED) are driven exactly like an unlit LED.
 static const RGB      led_off                       = {0};
+#if defined(SN32F2XX_LED_MIN_LOAD_DUTY) && (SN32F2XX_LED_MIN_LOAD_DUTY > 0)
+#    define SN32F2XX_LED_MIN_LOAD_ACTIVE
+#endif
+#if defined(SN32F2XX_LED_NOLED_LOAD_DUTY) && (SN32F2XX_LED_NOLED_LOAD_DUTY > 0)
+#    define SN32F2XX_LED_NOLED_LOAD_ACTIVE
+// Experimental (buglist BUG-004): while anything is lit, drive the matrix positions
+// that have no LED instead of every LED, so no visible LED gets a minimum duty. It
+// also enables every LED row line in every slot, like SN32F2XX_LED_MIN_LOAD_DUTY.
+static const RGB     led_noled_load = {SN32F2XX_LED_NOLED_LOAD_DUTY, SN32F2XX_LED_NOLED_LOAD_DUTY, SN32F2XX_LED_NOLED_LOAD_DUTY};
+static volatile bool led_any_lit    = false;
+#    define SN32F2XX_NOLED_RGB() (led_any_lit ? &led_noled_load : &led_off)
+#else
+#    define SN32F2XX_NOLED_RGB() (&led_off)
+#endif
 #ifdef UNDERGLOW_RBG // handle underglow with flipped B,G channels
 static const uint8_t underglow_leds[UNDERGLOW_LEDS] = UNDERGLOW_IDX;
 #endif
 
 #if defined(SHARED_MATRIX)
 void matrix_output_unselect_delay(uint8_t line, bool key_pressed) {
-#    ifdef SN32F2XX_MATRIX_UNSELECT_DELAY_FIX
-    // Experimental (buglist BUG-004): MATRIX_IO_DELAY is in microseconds, but
-    // TIME_US2I() below converts to system ticks (187.5 kHz), so the loop runs only
-    // ~6 iterations (~0.5 us) instead of the 30 us QMK uses to let the columns settle
-    // before the LED slot that follows the scan. This busy-waits the real time.
-    wait_cpuclock(MATRIX_IO_DELAY * (CPU_CLOCK / 1000000L));
-#    else
     for (int i = 0; i < TIME_US2I(MATRIX_IO_DELAY); ++i) {
         __asm__ volatile("" ::: "memory");
     }
-#    endif
 }
 bool matrix_can_read(void) {
     return matrix_scanned;
@@ -402,7 +411,7 @@ static void update_pwm_channels(PWMDriver *pwmp) {
 #    if (SN32F2XX_PWM_CONTROL == SOFTWARE_PWM)
         if (led_index >= SN32F2XX_LED_COUNT) continue;
 #    endif // SN32F2XX_PWM_CONTROL
-        const RGB *led = (led_index < SN32F2XX_LED_COUNT) ? &led_state[led_index] : &led_off;
+        const RGB *led = (led_index < SN32F2XX_LED_COUNT) ? &led_state[led_index] : SN32F2XX_NOLED_RGB();
         // Check if we need to enable RGB output
         if (led->b > 0) enable_pwm_output |= true;
         if (led->g > 0) enable_pwm_output |= true;
@@ -499,7 +508,7 @@ static void update_pwm_channels(PWMDriver *pwmp) {
 #    if (SN32F2XX_PWM_CONTROL == SOFTWARE_PWM)
         if (led_index >= SN32F2XX_LED_COUNT) continue;
 #    endif
-        const RGB *led = (led_index < SN32F2XX_LED_COUNT) ? &led_state[led_index] : &led_off;
+        const RGB *led = (led_index < SN32F2XX_LED_COUNT) ? &led_state[led_index] : SN32F2XX_NOLED_RGB();
         uint8_t led_row_id = (current_key_row * SN32F2XX_RGB_MATRIX_ROW_CHANNELS);
         // Check if we need to enable RGB output
         if (led->b > 0) enable_pwm_output |= true;
@@ -617,16 +626,21 @@ void sn32f2xx_init(void) {
 
 void sn32f2xx_flush(void) {
     if (led_state_buf_update_required) {
-#ifdef SN32F2XX_LED_MIN_LOAD_DUTY
-        // Optional workaround for colour channels that drop out when only a few
-        // LEDs are lit (see buglist BUG-004): while anything is lit, every LED
-        // channel gets at least this duty, so the matrix always carries a small
-        // load. When the whole matrix is dark (RGB off, timeout, suspend) nothing
-        // is added, so the board still goes completely dark.
+#if defined(SN32F2XX_LED_MIN_LOAD_ACTIVE) || defined(SN32F2XX_LED_NOLED_LOAD_ACTIVE)
         bool any_lit = false;
         for (uint8_t i = 0; i < SN32F2XX_LED_COUNT && !any_lit; i++) {
             any_lit = led_state_buf[i].r || led_state_buf[i].g || led_state_buf[i].b;
         }
+#endif
+#ifdef SN32F2XX_LED_NOLED_LOAD_ACTIVE
+        led_any_lit = any_lit;
+#endif
+#ifdef SN32F2XX_LED_MIN_LOAD_ACTIVE
+        // Workaround for colour channels that drop out when only a few LEDs are lit
+        // (see buglist BUG-004): while anything is lit, every LED channel gets at
+        // least this duty, so the matrix always carries a small load. When the whole
+        // matrix is dark (RGB off, timeout, suspend) nothing is added, so the board
+        // still goes completely dark.
         for (uint8_t i = 0; i < SN32F2XX_LED_COUNT; i++) {
             RGB c = led_state_buf[i];
             if (any_lit) {
