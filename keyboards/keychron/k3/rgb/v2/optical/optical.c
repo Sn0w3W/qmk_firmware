@@ -51,7 +51,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     static uint8_t battery_level           = 0;
     static uint8_t bt_profile              = 0;
 
-    static uint8_t bt_matrix_indexes[4];
+    // LED of the BT profile 1-3 and battery keys on the Fn layer. NO_LED until found,
+    // so an unmapped key never lights an unrelated LED.
+    static uint8_t bt_matrix_indexes[4] = {NO_LED, NO_LED, NO_LED, NO_LED};
+    static bool    bt_indexes_dirty     = true;
+
+    // Set from the module's battery notifications (ISR context), handled in housekeeping.
+    static volatile bool bt_battery_critical = false;
 
     static struct {
         uint8_t  color[3];          // текущий цвет анимации
@@ -171,6 +177,16 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         bt_blink_queue(RGB_RED, false);
     }
 
+    // Battery about to run out: get pending settings into flash while the
+    // supply is still good (flash writes at low voltage can corrupt the store).
+    void iton_bt_battery_voltage_low(void) {
+        bt_battery_critical = true;
+    }
+
+    void iton_bt_battery_low_power_shutdown(void) {
+        bt_battery_critical = true;
+    }
+
     void iton_bt_battery_level(uint8_t level) {
         // 0x01 -> 0, 0x02 -> 1, 0x04 -> 2
         if (level == 0x01)      battery_level = 0;
@@ -181,6 +197,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
     static void bt_recalc_matrix_indexes(void) {
         uint8_t fn_layer = (get_highest_layer(layer_state) <= 1) ? MAC_FN : WIN_FN;
+        for (uint8_t i = 0; i < sizeof(bt_matrix_indexes); i++) bt_matrix_indexes[i] = NO_LED;
         for (uint8_t row = 0; row < MATRIX_ROWS; row++) {
             for (uint8_t col = 0; col < MATRIX_COLS; col++) {
                 uint8_t index = g_led_config.matrix_co[row][col];
@@ -361,13 +378,53 @@ bool rgb_matrix_indicators_advanced_user(uint8_t led_min, uint8_t led_max) {
     return true;
 }
 
+#ifdef DEFERRED_EEPROM_SAVE
+static void eeprom_flush_pending(void) {
+    if (wear_leveling_cache_is_dirty()) {
+        wear_leveling_flush_cache();
+    }
+}
+
+// Deferred writes only live in RAM until flushed. Flush before any reset or
+// bootloader jump (QK_BOOT, QK_REBOOT, EE_CLR, VIA bootloader jump), otherwise
+// the last changes are lost and EE_CLR does not clear anything at all.
+bool shutdown_kb(bool jump_to_bootloader) {
+#    ifdef RGB_MATRIX_ENABLE
+    eeconfig_force_flush_rgb_matrix();
+#    endif
+    eeprom_flush_pending();
+    return shutdown_user(jump_to_bootloader);
+}
+// No suspend_power_down_kb() flush: BLUETOOTH_ENABLE sets NO_USB_STARTUP_CHECK,
+// which compiles the USB suspend loop (and that hook) out of chibios.c.
+#endif
+
+#ifdef BLUETOOTH_ITON_BT
+// bluetooth_init() runs after dip_switch_init() and starts the BT driver
+// unconditionally. In USB mode stop it again, exactly like a runtime switch to USB does.
+void keyboard_post_init_kb(void) {
+    if (!flags.dip_switch) {
+        iton_bt_deinit();
+    }
+    keyboard_post_init_user();
+}
+
+// BT keys live on the Fn layer: re-read their LEDs whenever it is activated,
+// so a VIA remap is picked up without a reboot.
+layer_state_t layer_state_set_kb(layer_state_t state) {
+    if (layer_state_cmp(state, MAC_FN) || layer_state_cmp(state, WIN_FN)) {
+        bt_indexes_dirty = true;
+    }
+    return layer_state_set_user(state);
+}
+#endif
+
 #if defined(BLUETOOTH_ITON_BT) || defined(DEFERRED_EEPROM_SAVE)
 void housekeeping_task_kb(void) {
 #ifdef BLUETOOTH_ITON_BT
-    static bool bt_indexes_initialized = false;
-    if (!bt_indexes_initialized) {
+    if (bt_indexes_dirty) {
+        bt_indexes_dirty = false;
         bt_recalc_matrix_indexes();
-        bt_indexes_initialized = true;
     }
     iton_bt_task();
 #endif
@@ -381,6 +438,12 @@ void housekeeping_task_kb(void) {
     if (wear_leveling_cache_is_dirty() && timer_elapsed(wear_leveling_last_dirty_time()) > EEPROM_FLUSH_DELAY_MS) {
         wear_leveling_flush_cache();
     }
+#    ifdef BLUETOOTH_ITON_BT
+    if (bt_battery_critical) {
+        bt_battery_critical = false;
+        eeprom_flush_pending();
+    }
+#    endif
 #endif
 }
 #endif
@@ -389,6 +452,9 @@ bool dip_switch_update_user(uint8_t index, bool active) {
     switch (index) {
         case 1:
             layer_move(active ? MAC_BASE : WIN_BASE);
+#ifdef BLUETOOTH_ITON_BT
+            bt_indexes_dirty = true;
+#endif
             return false;
 #ifdef BLUETOOTH_ITON_BT
         case 0:

@@ -6,7 +6,7 @@ LTO_ENABLE              = yes
 OPT                     = 2
 DEFERRED_EEPROM_SAVE	= yes
 
-DEFERRED_EEPROM_DELAY	= 10000
+DEFERRED_EEPROM_DELAY	= 3000
 
 ifeq ($(strip $(DEFERRED_EEPROM_SAVE)), yes)
     OPT_DEFS += -DDEFERRED_EEPROM_SAVE

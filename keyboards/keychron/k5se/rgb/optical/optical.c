@@ -175,6 +175,19 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         bt_blink_queue(RGB_RED, false);
     }
 
+    // Set from the module's battery notifications (ISR context), handled in housekeeping.
+    static volatile bool bt_battery_critical = false;
+
+    // Battery about to run out: get pending settings into flash while the
+    // supply is still good (flash writes at low voltage can corrupt the store).
+    void iton_bt_battery_voltage_low(void) {
+        bt_battery_critical = true;
+    }
+
+    void iton_bt_battery_low_power_shutdown(void) {
+        bt_battery_critical = true;
+    }
+
     void iton_bt_battery_level(uint8_t level) {
         // 0x01 -> 0, 0x02 -> 1, 0x04 -> 2
         if (level == 0x01)      battery_level = 0;
@@ -413,6 +426,36 @@ bool rgb_matrix_indicators_advanced_user(uint8_t led_min, uint8_t led_max) {
     return true;
 }
 
+#ifdef DEFERRED_EEPROM_SAVE
+static void eeprom_flush_pending(void) {
+    if (wear_leveling_cache_is_dirty()) {
+        wear_leveling_flush_cache();
+    }
+}
+
+// Deferred writes only live in RAM until flushed. Flush before any reset or
+// bootloader jump (QK_BOOT, QK_REBOOT, EE_CLR, VIA bootloader jump), otherwise
+// the last changes are lost and EE_CLR does not clear anything at all.
+bool shutdown_kb(bool jump_to_bootloader) {
+#    ifdef RGB_MATRIX_ENABLE
+    eeconfig_force_flush_rgb_matrix();
+#    endif
+    eeprom_flush_pending();
+    return shutdown_user(jump_to_bootloader);
+}
+#endif
+
+#ifdef BLUETOOTH_ITON_BT
+// bluetooth_init() runs after dip_switch_init() and starts the BT driver
+// unconditionally. In USB mode stop it again, exactly like a runtime switch to USB does.
+void keyboard_post_init_kb(void) {
+    if (!flags.dip_switch) {
+        iton_bt_deinit();
+    }
+    keyboard_post_init_user();
+}
+#endif
+
 #if defined(BLUETOOTH_ITON_BT) || defined(DEFERRED_EEPROM_SAVE)
 void housekeeping_task_kb(void) {
 #ifdef BLUETOOTH_ITON_BT
@@ -433,6 +476,12 @@ void housekeeping_task_kb(void) {
     if (wear_leveling_cache_is_dirty() && timer_elapsed(wear_leveling_last_dirty_time()) > EEPROM_FLUSH_DELAY_MS) {
         wear_leveling_flush_cache();
     }
+#    ifdef BLUETOOTH_ITON_BT
+    if (bt_battery_critical) {
+        bt_battery_critical = false;
+        eeprom_flush_pending();
+    }
+#    endif
 #endif
 }
 #endif
