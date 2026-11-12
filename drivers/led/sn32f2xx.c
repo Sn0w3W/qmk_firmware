@@ -95,13 +95,7 @@ static volatile bool matrix_locked  = false;     // matrix update check
 static volatile bool matrix_scanned = false;
 #endif // SHARED MATRIX
 static const uint32_t periodticks                               = RGB_MATRIX_MAXIMUM_BRIGHTNESS;
-#ifdef SN32F2XX_PWM_FREQUENCY
-// Experimental override of the PWM tick rate (one LED slot = 255 ticks). Pick a value
-// that divides the core clock, e.g. 1200000 on a 48 MHz part (slot ~213 us).
-static const uint32_t freq = SN32F2XX_PWM_FREQUENCY;
-#else
 static const uint32_t freq                                      = (RGB_MATRIX_HUE_STEP * RGB_MATRIX_SAT_STEP * RGB_MATRIX_VAL_STEP * RGB_MATRIX_SPD_STEP * RGB_MATRIX_LED_PROCESS_LIMIT);
-#endif
 static const pin_t    led_row_pins[SN32F2XX_RGB_MATRIX_ROWS_HW] = SN32F2XX_RGB_MATRIX_ROW_PINS; // We expect a R,B,G order here
 static const pin_t    led_col_pins[SN32F2XX_RGB_MATRIX_COLS]    = SN32F2XX_RGB_MATRIX_COL_PINS;
 static RGB            led_state[SN32F2XX_LED_COUNT];     // led state buffer
@@ -109,29 +103,6 @@ static RGB            led_state_buf[SN32F2XX_LED_COUNT]; // led state buffer
 bool                  led_state_buf_update_required = false;
 // Matrix positions without an LED (NO_LED) are driven exactly like an unlit LED.
 static const RGB      led_off                       = {0};
-#if defined(SN32F2XX_LED_MIN_LOAD_DUTY) && (SN32F2XX_LED_MIN_LOAD_DUTY > 0)
-#    define SN32F2XX_LED_MIN_LOAD_ACTIVE
-// Bit mask of key matrix rows whose LEDs get the minimum duty (default: all rows).
-#    ifndef SN32F2XX_LED_MIN_LOAD_ROWS
-#        define SN32F2XX_LED_MIN_LOAD_ROWS 0xFF
-#    endif
-#endif
-#if defined(SN32F2XX_LED_LOAD_LED) && defined(SN32F2XX_LED_LOAD_LED_DUTY) && (SN32F2XX_LED_LOAD_LED_DUTY > 0)
-// While anything is lit, this one LED gets at least SN32F2XX_LED_LOAD_LED_DUTY on every
-// channel: a single, chosen key carries the load instead of every LED (buglist BUG-004).
-#    define SN32F2XX_LED_LOAD_LED_ACTIVE
-#endif
-#if defined(SN32F2XX_LED_NOLED_LOAD_DUTY) && (SN32F2XX_LED_NOLED_LOAD_DUTY > 0)
-#    define SN32F2XX_LED_NOLED_LOAD_ACTIVE
-// Experimental (buglist BUG-004): while anything is lit, drive the matrix positions
-// that have no LED instead of every LED, so no visible LED gets a minimum duty. It
-// also enables every LED row line in every slot, like SN32F2XX_LED_MIN_LOAD_DUTY.
-static const RGB     led_noled_load = {SN32F2XX_LED_NOLED_LOAD_DUTY, SN32F2XX_LED_NOLED_LOAD_DUTY, SN32F2XX_LED_NOLED_LOAD_DUTY};
-static volatile bool led_any_lit    = false;
-#    define SN32F2XX_NOLED_RGB() (led_any_lit ? &led_noled_load : &led_off)
-#else
-#    define SN32F2XX_NOLED_RGB() (&led_off)
-#endif
 #ifdef UNDERGLOW_RBG // handle underglow with flipped B,G channels
 static const uint8_t underglow_leds[UNDERGLOW_LEDS] = UNDERGLOW_IDX;
 #endif
@@ -420,7 +391,7 @@ static void update_pwm_channels(PWMDriver *pwmp) {
 #    if (SN32F2XX_PWM_CONTROL == SOFTWARE_PWM)
         if (led_index >= SN32F2XX_LED_COUNT) continue;
 #    endif // SN32F2XX_PWM_CONTROL
-        const RGB *led = (led_index < SN32F2XX_LED_COUNT) ? &led_state[led_index] : SN32F2XX_NOLED_RGB();
+        const RGB *led = (led_index < SN32F2XX_LED_COUNT) ? &led_state[led_index] : &led_off;
         // Check if we need to enable RGB output
         if (led->b > 0) enable_pwm_output |= true;
         if (led->g > 0) enable_pwm_output |= true;
@@ -454,6 +425,18 @@ static void update_pwm_channels(PWMDriver *pwmp) {
         }
 #    endif
     }
+#    if (SN32F2XX_PWM_CONTROL == HARDWARE_PWM)
+    // The duties written above belong to the next slot (hence the b/g/r preload and the
+    // key row advancing at % 3 == 2), while the row line switched on below lights now,
+    // with the duties written by the previous call. Gate it on that call's data. Gating
+    // it on this call's data made the G line of every row depend on the next row being
+    // lit (bottom row: on the top row), so green dropped out when few LEDs were lit
+    // (buglist BUG-004). For the R and B lines both calls cover the same key row.
+    static bool row_line_enable = false;
+    bool        row_line_on     = row_line_enable;
+    row_line_enable             = enable_pwm_output;
+    enable_pwm_output           = row_line_on;
+#    endif
     // Enable RGB output
     if (enable_pwm_output) {
 #    if (SN32F2XX_RGB_OUTPUT_ACTIVE_LEVEL == SN32F2XX_RGB_OUTPUT_ACTIVE_HIGH)
@@ -517,7 +500,7 @@ static void update_pwm_channels(PWMDriver *pwmp) {
 #    if (SN32F2XX_PWM_CONTROL == SOFTWARE_PWM)
         if (led_index >= SN32F2XX_LED_COUNT) continue;
 #    endif
-        const RGB *led = (led_index < SN32F2XX_LED_COUNT) ? &led_state[led_index] : SN32F2XX_NOLED_RGB();
+        const RGB *led = (led_index < SN32F2XX_LED_COUNT) ? &led_state[led_index] : &led_off;
         uint8_t led_row_id = (current_key_row * SN32F2XX_RGB_MATRIX_ROW_CHANNELS);
         // Check if we need to enable RGB output
         if (led->b > 0) enable_pwm_output |= true;
@@ -635,58 +618,7 @@ void sn32f2xx_init(void) {
 
 void sn32f2xx_flush(void) {
     if (led_state_buf_update_required) {
-#if defined(SN32F2XX_LED_MIN_LOAD_ACTIVE) || defined(SN32F2XX_LED_NOLED_LOAD_ACTIVE) || defined(SN32F2XX_LED_LOAD_LED_ACTIVE)
-        bool any_lit = false;
-        for (uint8_t i = 0; i < SN32F2XX_LED_COUNT && !any_lit; i++) {
-            any_lit = led_state_buf[i].r || led_state_buf[i].g || led_state_buf[i].b;
-        }
-#endif
-#ifdef SN32F2XX_LED_NOLED_LOAD_ACTIVE
-        led_any_lit = any_lit;
-#endif
-#ifdef SN32F2XX_LED_MIN_LOAD_ACTIVE
-        // Workaround for colour channels that drop out when only a few LEDs are lit
-        // (see buglist BUG-004): while anything is lit, every LED channel gets at
-        // least this duty, so the matrix always carries a small load. When the whole
-        // matrix is dark (RGB off, timeout, suspend) nothing is added, so the board
-        // still goes completely dark.
-#    if (SN32F2XX_LED_MIN_LOAD_ROWS & 0xFF) != 0xFF
-        static uint8_t led_row_of[SN32F2XX_LED_COUNT];
-        static bool    led_row_of_ready = false;
-        if (!led_row_of_ready) {
-            for (uint8_t row = 0; row < MATRIX_ROWS; row++) {
-                for (uint8_t col = 0; col < MATRIX_COLS; col++) {
-                    uint8_t idx = g_led_config.matrix_co[row][col];
-                    if (idx < SN32F2XX_LED_COUNT) led_row_of[idx] = row;
-                }
-            }
-            led_row_of_ready = true;
-        }
-#    endif
-        for (uint8_t i = 0; i < SN32F2XX_LED_COUNT; i++) {
-            RGB c = led_state_buf[i];
-#    if (SN32F2XX_LED_MIN_LOAD_ROWS & 0xFF) != 0xFF
-            if (any_lit && ((SN32F2XX_LED_MIN_LOAD_ROWS >> led_row_of[i]) & 1)) {
-#    else
-            if (any_lit) {
-#    endif
-                if (c.r < SN32F2XX_LED_MIN_LOAD_DUTY) c.r = SN32F2XX_LED_MIN_LOAD_DUTY;
-                if (c.g < SN32F2XX_LED_MIN_LOAD_DUTY) c.g = SN32F2XX_LED_MIN_LOAD_DUTY;
-                if (c.b < SN32F2XX_LED_MIN_LOAD_DUTY) c.b = SN32F2XX_LED_MIN_LOAD_DUTY;
-            }
-            led_state[i] = c;
-        }
-#else
         memcpy(led_state, led_state_buf, sizeof(RGB) * SN32F2XX_LED_COUNT);
-#endif
-#ifdef SN32F2XX_LED_LOAD_LED_ACTIVE
-        if (any_lit && SN32F2XX_LED_LOAD_LED < SN32F2XX_LED_COUNT) {
-            RGB *c = &led_state[SN32F2XX_LED_LOAD_LED];
-            if (c->r < SN32F2XX_LED_LOAD_LED_DUTY) c->r = SN32F2XX_LED_LOAD_LED_DUTY;
-            if (c->g < SN32F2XX_LED_LOAD_LED_DUTY) c->g = SN32F2XX_LED_LOAD_LED_DUTY;
-            if (c->b < SN32F2XX_LED_LOAD_LED_DUTY) c->b = SN32F2XX_LED_LOAD_LED_DUTY;
-        }
-#endif
         led_state_buf_update_required = false;
     }
 }
@@ -697,14 +629,6 @@ void sn32f2xx_set_color(int index, uint8_t r, uint8_t g, uint8_t b) {
     uint8_t color_r = r * SN32F2XX_LED_OUTPUT_LUMINOSITY_R;
     uint8_t color_g = g * SN32F2XX_LED_OUTPUT_LUMINOSITY_G;
     uint8_t color_b = b * SN32F2XX_LED_OUTPUT_LUMINOSITY_B;
-#ifdef SN32F2XX_LED_MIN_ON_DUTY
-    // Optional workaround for short PWM pulses that are too short to light the
-    // higher-Vf green/blue dies (see buglist BUG-004): a channel that is on gets
-    // at least this duty. Channels that are off stay off, so unlit LEDs stay dark.
-    if (color_r && color_r < SN32F2XX_LED_MIN_ON_DUTY) color_r = SN32F2XX_LED_MIN_ON_DUTY;
-    if (color_g && color_g < SN32F2XX_LED_MIN_ON_DUTY) color_g = SN32F2XX_LED_MIN_ON_DUTY;
-    if (color_b && color_b < SN32F2XX_LED_MIN_ON_DUTY) color_b = SN32F2XX_LED_MIN_ON_DUTY;
-#endif
 
 #ifdef UNDERGLOW_RBG
     bool flip_gb = false;
