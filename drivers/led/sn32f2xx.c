@@ -101,6 +101,8 @@ static const pin_t    led_col_pins[SN32F2XX_RGB_MATRIX_COLS]    = SN32F2XX_RGB_M
 static RGB            led_state[SN32F2XX_LED_COUNT];     // led state buffer
 static RGB            led_state_buf[SN32F2XX_LED_COUNT]; // led state buffer
 bool                  led_state_buf_update_required = false;
+// Matrix positions without an LED (NO_LED) are driven exactly like an unlit LED.
+static const RGB      led_off                       = {0};
 #ifdef UNDERGLOW_RBG // handle underglow with flipped B,G channels
 static const uint8_t underglow_leds[UNDERGLOW_LEDS] = UNDERGLOW_IDX;
 #endif
@@ -389,34 +391,35 @@ static void update_pwm_channels(PWMDriver *pwmp) {
 #    if (SN32F2XX_PWM_CONTROL == SOFTWARE_PWM)
         if (led_index >= SN32F2XX_LED_COUNT) continue;
 #    endif // SN32F2XX_PWM_CONTROL
+        const RGB *led = (led_index < SN32F2XX_LED_COUNT) ? &led_state[led_index] : &led_off;
         // Check if we need to enable RGB output
-        if (led_state[led_index].b > 0) enable_pwm_output |= true;
-        if (led_state[led_index].g > 0) enable_pwm_output |= true;
-        if (led_state[led_index].r > 0) enable_pwm_output |= true;
+        if (led->b > 0) enable_pwm_output |= true;
+        if (led->g > 0) enable_pwm_output |= true;
+        if (led->r > 0) enable_pwm_output |= true;
         // Update matching RGB channel PWM configuration
 #    if (SN32F2XX_PWM_CONTROL == HARDWARE_PWM)
         switch (current_row % SN32F2XX_RGB_MATRIX_ROW_CHANNELS) {
             case 0:
-                pwmEnableChannel(pwmp, chan_col_order[current_key_col], led_state[led_index].b);
+                pwmEnableChannel(pwmp, chan_col_order[current_key_col], led->b);
                 break;
             case 1:
-                pwmEnableChannel(pwmp, chan_col_order[current_key_col], led_state[led_index].g);
+                pwmEnableChannel(pwmp, chan_col_order[current_key_col], led->g);
                 break;
             case 2:
-                pwmEnableChannel(pwmp, chan_col_order[current_key_col], led_state[led_index].r);
+                pwmEnableChannel(pwmp, chan_col_order[current_key_col], led->r);
                 break;
             default:;
         }
 #    elif (SN32F2XX_PWM_CONTROL == SOFTWARE_PWM)
         switch (current_row % SN32F2XX_RGB_MATRIX_ROW_CHANNELS) {
             case 0:
-                led_duty_cycle[current_key_col] = led_state[led_index].r;
+                led_duty_cycle[current_key_col] = led->r;
                 break;
             case 1:
-                led_duty_cycle[current_key_col] = led_state[led_index].b;
+                led_duty_cycle[current_key_col] = led->b;
                 break;
             case 2:
-                led_duty_cycle[current_key_col] = led_state[led_index].g;
+                led_duty_cycle[current_key_col] = led->g;
                 break;
             default:;
         }
@@ -485,16 +488,17 @@ static void update_pwm_channels(PWMDriver *pwmp) {
 #    if (SN32F2XX_PWM_CONTROL == SOFTWARE_PWM)
         if (led_index >= SN32F2XX_LED_COUNT) continue;
 #    endif
+        const RGB *led = (led_index < SN32F2XX_LED_COUNT) ? &led_state[led_index] : &led_off;
         uint8_t led_row_id = (current_key_row * SN32F2XX_RGB_MATRIX_ROW_CHANNELS);
         // Check if we need to enable RGB output
-        if (led_state[led_index].b > 0) enable_pwm_output |= true;
-        if (led_state[led_index].g > 0) enable_pwm_output |= true;
-        if (led_state[led_index].r > 0) enable_pwm_output |= true;
+        if (led->b > 0) enable_pwm_output |= true;
+        if (led->g > 0) enable_pwm_output |= true;
+        if (led->r > 0) enable_pwm_output |= true;
         // Update matching RGB channel PWM configuration
 #    if (SN32F2XX_PWM_CONTROL == HARDWARE_PWM)
-        pwmEnableChannelI(pwmp, chan_row_order[(led_row_id + 0)], led_state[led_index].r);
-        pwmEnableChannelI(pwmp, chan_row_order[(led_row_id + 1)], led_state[led_index].b);
-        pwmEnableChannelI(pwmp, chan_row_order[(led_row_id + 2)], led_state[led_index].g);
+        pwmEnableChannelI(pwmp, chan_row_order[(led_row_id + 0)], led->r);
+        pwmEnableChannelI(pwmp, chan_row_order[(led_row_id + 1)], led->b);
+        pwmEnableChannelI(pwmp, chan_row_order[(led_row_id + 2)], led->g);
     }
     // Enable RGB output
     if (enable_pwm_output) {
@@ -506,9 +510,9 @@ static void update_pwm_channels(PWMDriver *pwmp) {
 #        endif // SN32F2XX_RGB_OUTPUT_ACTIVE_LEVEL
     }
 #    elif (SN32F2XX_PWM_CONTROL == SOFTWARE_PWM)
-        led_duty_cycle[(led_row_id + 0)] = led_state[led_index].r;
-        led_duty_cycle[(led_row_id + 1)] = led_state[led_index].b;
-        led_duty_cycle[(led_row_id + 2)] = led_state[led_index].g;
+        led_duty_cycle[(led_row_id + 0)] = led->r;
+        led_duty_cycle[(led_row_id + 1)] = led->b;
+        led_duty_cycle[(led_row_id + 2)] = led->g;
     }
     // Enable RGB output
     if (enable_pwm_output) {
@@ -608,16 +612,11 @@ void sn32f2xx_flush(void) {
 }
 
 void sn32f2xx_set_color(int index, uint8_t r, uint8_t g, uint8_t b) {
+    // Same guard as the other QMK LED drivers: NO_LED or a bad index must not write past led_state_buf
+    if (index < 0 || index >= SN32F2XX_LED_COUNT) return;
     uint8_t color_r = r * SN32F2XX_LED_OUTPUT_LUMINOSITY_R;
     uint8_t color_g = g * SN32F2XX_LED_OUTPUT_LUMINOSITY_G;
     uint8_t color_b = b * SN32F2XX_LED_OUTPUT_LUMINOSITY_B;
-#ifdef SN32F2XX_LED_OUTPUT_LUMINOSITY_MIN
-    if (rgb_matrix_is_enabled()) {
-        if (color_r < SN32F2XX_LED_OUTPUT_LUMINOSITY_MIN) color_r = SN32F2XX_LED_OUTPUT_LUMINOSITY_MIN;
-        if (color_g < SN32F2XX_LED_OUTPUT_LUMINOSITY_MIN) color_g = SN32F2XX_LED_OUTPUT_LUMINOSITY_MIN;
-        if (color_b < SN32F2XX_LED_OUTPUT_LUMINOSITY_MIN) color_b = SN32F2XX_LED_OUTPUT_LUMINOSITY_MIN;
-    }
-#endif
 
 #ifdef UNDERGLOW_RBG
     bool flip_gb = false;

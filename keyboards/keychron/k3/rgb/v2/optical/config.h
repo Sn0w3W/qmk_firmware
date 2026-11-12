@@ -18,7 +18,6 @@
 
 #pragma once
 #define SN32F2XX_RGB_MATRIX_ROW_PINS { C3, C1, C0, C6, C5, C4, C9, C8, C7, C12, C11, C10, B13, C14, C13, B14, B15, D3 }
-#define SN32F2XX_LED_OUTPUT_LUMINOSITY_MIN 1
 
 // QMK now limits the System Control usage range to 0x01-0x8F (#26295).
 // KC_DNDB sends 0x9B (System Do Not Disturb), so keep the previous range.
