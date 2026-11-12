@@ -116,6 +116,11 @@ static const RGB      led_off                       = {0};
 #        define SN32F2XX_LED_MIN_LOAD_ROWS 0xFF
 #    endif
 #endif
+#if defined(SN32F2XX_LED_LOAD_LED) && defined(SN32F2XX_LED_LOAD_LED_DUTY) && (SN32F2XX_LED_LOAD_LED_DUTY > 0)
+// While anything is lit, this one LED gets at least SN32F2XX_LED_LOAD_LED_DUTY on every
+// channel: a single, chosen key carries the load instead of every LED (buglist BUG-004).
+#    define SN32F2XX_LED_LOAD_LED_ACTIVE
+#endif
 #if defined(SN32F2XX_LED_NOLED_LOAD_DUTY) && (SN32F2XX_LED_NOLED_LOAD_DUTY > 0)
 #    define SN32F2XX_LED_NOLED_LOAD_ACTIVE
 // Experimental (buglist BUG-004): while anything is lit, drive the matrix positions
@@ -630,7 +635,7 @@ void sn32f2xx_init(void) {
 
 void sn32f2xx_flush(void) {
     if (led_state_buf_update_required) {
-#if defined(SN32F2XX_LED_MIN_LOAD_ACTIVE) || defined(SN32F2XX_LED_NOLED_LOAD_ACTIVE)
+#if defined(SN32F2XX_LED_MIN_LOAD_ACTIVE) || defined(SN32F2XX_LED_NOLED_LOAD_ACTIVE) || defined(SN32F2XX_LED_LOAD_LED_ACTIVE)
         bool any_lit = false;
         for (uint8_t i = 0; i < SN32F2XX_LED_COUNT && !any_lit; i++) {
             any_lit = led_state_buf[i].r || led_state_buf[i].g || led_state_buf[i].b;
@@ -673,6 +678,14 @@ void sn32f2xx_flush(void) {
         }
 #else
         memcpy(led_state, led_state_buf, sizeof(RGB) * SN32F2XX_LED_COUNT);
+#endif
+#ifdef SN32F2XX_LED_LOAD_LED_ACTIVE
+        if (any_lit && SN32F2XX_LED_LOAD_LED < SN32F2XX_LED_COUNT) {
+            RGB *c = &led_state[SN32F2XX_LED_LOAD_LED];
+            if (c->r < SN32F2XX_LED_LOAD_LED_DUTY) c->r = SN32F2XX_LED_LOAD_LED_DUTY;
+            if (c->g < SN32F2XX_LED_LOAD_LED_DUTY) c->g = SN32F2XX_LED_LOAD_LED_DUTY;
+            if (c->b < SN32F2XX_LED_LOAD_LED_DUTY) c->b = SN32F2XX_LED_LOAD_LED_DUTY;
+        }
 #endif
         led_state_buf_update_required = false;
     }
