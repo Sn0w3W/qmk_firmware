@@ -94,9 +94,18 @@ enum iton_bt_notification_param {
  * Exported Variables
  */
 #ifdef ITON_BT_ENABLE_LED_STATE
-uint8_t iton_bt_led_state;
+extern volatile uint8_t iton_bt_led_state;
 #endif
-bool iton_bt_is_connected;
+extern bool iton_bt_is_connected;
+
+// Bus diagnostics, never reset. Useful to tell a stuck module from a firmware problem.
+typedef struct {
+    uint16_t tx_timeouts; // previous frame was not clocked out within ITON_BT_TX_TIMEOUT_MS
+    uint16_t tx_aborted;  // a frame was cut off by an incoming packet
+    uint16_t tx_retried;  // a cut-off frame was sent again by iton_bt_task()
+    uint16_t ack_dropped; // the ACK queue was full
+} iton_bt_stats_t;
+extern volatile iton_bt_stats_t iton_bt_stats;
 
 /**
  * Driver Callbacks
@@ -122,8 +131,8 @@ void iton_bt_init(void);
 void iton_bt_deinit(void);
 void iton_bt_send(uint8_t cmd, uint8_t *data, uint8_t len);
 void iton_bt_send2(uint8_t cmd, uint8_t b1, uint8_t b2);
-void iton_bt_send_ack(uint8_t b1, uint8_t b2);
-void iton_bt_task(void);
+void iton_bt_send_ack(uint8_t b1, uint8_t b2); // ISR context only
+void iton_bt_task(void);                        // main loop: deferred ACKs and retries
 
 void iton_bt_send_fn(bool pressed);
 void iton_bt_send_system(uint16_t data);
