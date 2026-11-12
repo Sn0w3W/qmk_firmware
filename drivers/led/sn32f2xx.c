@@ -18,6 +18,9 @@
 #include "matrix.h"
 #include "rgb_matrix.h"
 #include "sn32f2xx.h"
+#ifdef SN32F2XX_MATRIX_UNSELECT_DELAY_FIX
+#    include "wait.h"
+#endif
 
 #define ROWS_PER_HAND (MATRIX_ROWS)
 
@@ -109,9 +112,17 @@ static const uint8_t underglow_leds[UNDERGLOW_LEDS] = UNDERGLOW_IDX;
 
 #if defined(SHARED_MATRIX)
 void matrix_output_unselect_delay(uint8_t line, bool key_pressed) {
+#    ifdef SN32F2XX_MATRIX_UNSELECT_DELAY_FIX
+    // Experimental (buglist BUG-004): MATRIX_IO_DELAY is in microseconds, but
+    // TIME_US2I() below converts to system ticks (187.5 kHz), so the loop runs only
+    // ~6 iterations (~0.5 us) instead of the 30 us QMK uses to let the columns settle
+    // before the LED slot that follows the scan. This busy-waits the real time.
+    wait_cpuclock(MATRIX_IO_DELAY * (CPU_CLOCK / 1000000L));
+#    else
     for (int i = 0; i < TIME_US2I(MATRIX_IO_DELAY); ++i) {
         __asm__ volatile("" ::: "memory");
     }
+#    endif
 }
 bool matrix_can_read(void) {
     return matrix_scanned;
