@@ -334,7 +334,62 @@ bool process_record_kb(uint16_t keycode, keyrecord_t *record) {
     return process_record_user(keycode, record);
 }
 
+#ifdef K3_DIAG
+// Debug-only (-DK3_DIAG): for 10 s after boot Esc shows why the MCU last reset
+// (red LVD/brown-out, blue external reset pin, yellow watchdog, magenta software
+// reset e.g. after flashing, green power-on); F1 flashes orange for 2 s whenever
+// the BT bus waited for the module until ITON_BT_TX_TIMEOUT_MS.
+static uint8_t  diag_reset_flags   = 0;
+static uint16_t diag_boot_time     = 0;
+static uint16_t diag_seen_timeouts = 0;
+static uint16_t diag_timeout_time  = 0;
+static bool     diag_timeout_flash = false;
+
+void keyboard_pre_init_kb(void) {
+    diag_reset_flags = SN_SYS0->RSTST & 0x1F;
+    SN_SYS0->RSTST   = 0x1F; // assumed write-1-to-clear; a stale cause after a plain power-on means it is not
+    keyboard_pre_init_user();
+}
+
+static void diag_indicators(void) {
+    if (timer_elapsed(diag_boot_time) < 10000) {
+        uint8_t esc = g_led_config.matrix_co[0][0];
+        if (diag_reset_flags & 0x04) {
+            rgb_matrix_set_color(esc, RGB_RED); // LVD
+        } else if (diag_reset_flags & 0x02) {
+            rgb_matrix_set_color(esc, RGB_YELLOW); // watchdog
+        } else if (diag_reset_flags & 0x08) {
+            rgb_matrix_set_color(esc, RGB_BLUE); // external reset pin
+        } else if (diag_reset_flags & 0x01) {
+            rgb_matrix_set_color(esc, RGB_MAGENTA); // software reset
+        } else if (diag_reset_flags & 0x10) {
+            rgb_matrix_set_color(esc, RGB_GREEN); // power-on
+        } else {
+            rgb_matrix_set_color(esc, RGB_WHITE); // no flag
+        }
+    }
+#    ifdef BLUETOOTH_ITON_BT
+    uint16_t timeouts = iton_bt_stats.tx_timeouts;
+    if (timeouts != diag_seen_timeouts) {
+        diag_seen_timeouts = timeouts;
+        diag_timeout_time  = timer_read();
+        diag_timeout_flash = true;
+    }
+    if (diag_timeout_flash) {
+        if (timer_elapsed(diag_timeout_time) < 2000) {
+            rgb_matrix_set_color(g_led_config.matrix_co[0][1], RGB_ORANGE);
+        } else {
+            diag_timeout_flash = false;
+        }
+    }
+#    endif
+}
+#endif
+
 bool rgb_matrix_indicators_advanced_user(uint8_t led_min, uint8_t led_max) {
+#ifdef K3_DIAG
+    diag_indicators();
+#endif
 
     static hsv_t cached_hsv   = {0};
     static rgb_t cached_color = {0};
@@ -423,6 +478,9 @@ bool shutdown_kb(bool jump_to_bootloader) {
 // bluetooth_init() runs after dip_switch_init() and starts the BT driver
 // unconditionally. In USB mode stop it again, exactly like a runtime switch to USB does.
 void keyboard_post_init_kb(void) {
+#    ifdef K3_DIAG
+    diag_boot_time = timer_read();
+#    endif
     if (!flags.dip_switch) {
         iton_bt_deinit();
     }

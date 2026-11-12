@@ -111,6 +111,10 @@ bool                  led_state_buf_update_required = false;
 static const RGB      led_off                       = {0};
 #if defined(SN32F2XX_LED_MIN_LOAD_DUTY) && (SN32F2XX_LED_MIN_LOAD_DUTY > 0)
 #    define SN32F2XX_LED_MIN_LOAD_ACTIVE
+// Bit mask of key matrix rows whose LEDs get the minimum duty (default: all rows).
+#    ifndef SN32F2XX_LED_MIN_LOAD_ROWS
+#        define SN32F2XX_LED_MIN_LOAD_ROWS 0xFF
+#    endif
 #endif
 #if defined(SN32F2XX_LED_NOLED_LOAD_DUTY) && (SN32F2XX_LED_NOLED_LOAD_DUTY > 0)
 #    define SN32F2XX_LED_NOLED_LOAD_ACTIVE
@@ -641,9 +645,26 @@ void sn32f2xx_flush(void) {
         // least this duty, so the matrix always carries a small load. When the whole
         // matrix is dark (RGB off, timeout, suspend) nothing is added, so the board
         // still goes completely dark.
+#    if (SN32F2XX_LED_MIN_LOAD_ROWS & 0xFF) != 0xFF
+        static uint8_t led_row_of[SN32F2XX_LED_COUNT];
+        static bool    led_row_of_ready = false;
+        if (!led_row_of_ready) {
+            for (uint8_t row = 0; row < MATRIX_ROWS; row++) {
+                for (uint8_t col = 0; col < MATRIX_COLS; col++) {
+                    uint8_t idx = g_led_config.matrix_co[row][col];
+                    if (idx < SN32F2XX_LED_COUNT) led_row_of[idx] = row;
+                }
+            }
+            led_row_of_ready = true;
+        }
+#    endif
         for (uint8_t i = 0; i < SN32F2XX_LED_COUNT; i++) {
             RGB c = led_state_buf[i];
+#    if (SN32F2XX_LED_MIN_LOAD_ROWS & 0xFF) != 0xFF
+            if (any_lit && ((SN32F2XX_LED_MIN_LOAD_ROWS >> led_row_of[i]) & 1)) {
+#    else
             if (any_lit) {
+#    endif
                 if (c.r < SN32F2XX_LED_MIN_LOAD_DUTY) c.r = SN32F2XX_LED_MIN_LOAD_DUTY;
                 if (c.g < SN32F2XX_LED_MIN_LOAD_DUTY) c.g = SN32F2XX_LED_MIN_LOAD_DUTY;
                 if (c.b < SN32F2XX_LED_MIN_LOAD_DUTY) c.b = SN32F2XX_LED_MIN_LOAD_DUTY;
