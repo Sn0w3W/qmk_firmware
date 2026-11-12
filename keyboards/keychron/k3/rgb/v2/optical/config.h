@@ -31,9 +31,11 @@
     // sleep_idle_10m, sleep_idle_20m or sleep_idle_30m. Sent with enable_sleep on every
     // switch to BT mode and every connection. Comment out to send nothing to the module.
     #define BT_MODULE_SLEEP_IDLE sleep_idle_10m
-    // MCU sleep in BT mode on battery: once the backlight is dark and no key was pressed
-    // for BT_MCU_SLEEP_IDLE_MS, the main loop pauses BT_MCU_SLEEP_TICK_MS per pass and the
-    // core sleeps between interrupts. Key scanning keeps running, so a key press wakes it.
-    // Comment out to keep the main loop running at full speed.
-    #define BT_MCU_SLEEP
 #endif
+
+// MCU sleep in USB and BT mode, on battery or USB power alike: once the backlight is dark
+// and no key was pressed for KB_IDLE_SLEEP_IDLE_MS (5 s), the main loop pauses
+// KB_IDLE_SLEEP_TICK_MS (5 ms) per pass and the core sleeps between interrupts. Key
+// scanning keeps running, so a key press wakes it. Comment out to keep the main loop
+// running at full speed.
+#define KB_IDLE_SLEEP

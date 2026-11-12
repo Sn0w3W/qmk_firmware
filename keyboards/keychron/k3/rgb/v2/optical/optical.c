@@ -20,11 +20,19 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     #include "wear_leveling.h"
 #endif
 
+#ifdef KB_IDLE_SLEEP
+    #ifndef KB_IDLE_SLEEP_IDLE_MS
+        #define KB_IDLE_SLEEP_IDLE_MS 5000 // no key press for this long, backlight dark
+    #endif
+    #ifndef KB_IDLE_SLEEP_TICK_MS
+        #define KB_IDLE_SLEEP_TICK_MS 5 // main loop pause per pass while asleep
+    #endif
+#endif
+
 #ifdef BLUETOOTH_ITON_BT
     #include "iton_bt.h"
     #include "outputselect.h"
     #include "atomic_util.h"
-    #include "usb_util.h"
 
     #define BT_BATTERY_DURATION_MS 2500
     #define BT_BATTERY_WAIT_QUERY_DURATION_MS 10000
@@ -73,14 +81,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     static uint8_t bt_module_cfg_step = 0; // 0 done, 1 idle timeout next, 2 enable_sleep next
     #endif
 
-    #ifdef BT_MCU_SLEEP
-    #ifndef BT_MCU_SLEEP_IDLE_MS
-        #define BT_MCU_SLEEP_IDLE_MS 5000 // no key press for this long, backlight dark
-    #endif
-    #ifndef BT_MCU_SLEEP_TICK_MS
-        #define BT_MCU_SLEEP_TICK_MS 5 // main loop pause per pass while asleep
-    #endif
-    #endif
 
     static struct {
         uint8_t  color[3];          // текущий цвет анимации
@@ -352,7 +352,7 @@ static uint16_t diag_seen_timeouts = 0;
 static uint16_t diag_timeout_time  = 0;
 static bool     diag_timeout_flash = false;
 
-#    if defined(BLUETOOTH_ITON_BT) && defined(BT_MCU_SLEEP)
+#    ifdef KB_IDLE_SLEEP
 // MCU sleep report: after a key press ends an idle period in which the MCU slept for
 // 1 s or more, for 5 s Esc shows the share of that period the main loop spent paused
 // (cyan 90 % and up, yellow 50 % and up, red below) and F1-F12 light cyan, one per
@@ -378,7 +378,7 @@ static void diag_sleep_paused_for(uint32_t pause_start, uint32_t ms) {
 // Called on every main loop pass. Short BT-driven wakes keep the period open; only
 // input (a key press) ends it.
 static void diag_sleep_check_wake(void) {
-    if (!diag_sleeping || last_input_activity_elapsed() >= BT_MCU_SLEEP_IDLE_MS) return;
+    if (!diag_sleeping || last_input_activity_elapsed() >= KB_IDLE_SLEEP_IDLE_MS) return;
     diag_sleeping = false;
     uint32_t span = timer_elapsed32(diag_sleep_start);
     if (span < 1000) return;
@@ -432,7 +432,7 @@ static void diag_indicators(void) {
         }
     }
 #    endif
-#    if defined(BLUETOOTH_ITON_BT) && defined(BT_MCU_SLEEP)
+#    ifdef KB_IDLE_SLEEP
     if (diag_sleep_show) {
         if (timer_elapsed(diag_sleep_shown_at) < 5000) {
             uint8_t esc = g_led_config.matrix_co[0][0];
@@ -565,34 +565,37 @@ layer_state_t layer_state_set_kb(layer_state_t state) {
 }
 #endif
 
-#if defined(BLUETOOTH_ITON_BT) && defined(BT_MCU_SLEEP)
-// BT mode has no sleep of its own: the USB suspend loop that would pause the main loop
-// is compiled out (BLUETOOTH_ENABLE sets NO_USB_STARTUP_CHECK), so it spins at 100 %.
-// Pause it while there is nothing to do; any key press ends that within a few passes.
-static bool bt_mcu_can_sleep(void) {
-    if (!flags.dip_switch) return false;        // USB mode
-    if (usb_connected_state()) return false;    // on a host's USB power, not the battery
+#ifdef KB_IDLE_SLEEP
+// The board never sleeps on its own, in either mode: BLUETOOTH_ENABLE sets
+// NO_USB_STARTUP_CHECK, which compiles out the USB suspend loop (the only place QMK
+// pauses the main loop), so the loop spins at 100 % all the time. Pause it while there
+// is nothing to do, in USB and BT mode, on battery or USB power alike; any key press
+// ends that within a few passes.
+static bool kb_can_sleep(void) {
     uint32_t idle = last_input_activity_elapsed();
-    if (idle < BT_MCU_SLEEP_IDLE_MS) return false;
+    if (idle < KB_IDLE_SLEEP_IDLE_MS) return false;
 #    ifdef RGB_MATRIX_ENABLE
     // Animations and BT indicators are rendered by the main loop: wait for the
     // backlight timeout (plus the margin, for the frame that turns everything off).
     if (rgb_matrix_is_enabled() && !rgb_matrix_get_suspend_state()) {
 #        if RGB_MATRIX_TIMEOUT > 0
-        if (idle < (uint32_t)RGB_MATRIX_TIMEOUT + BT_MCU_SLEEP_IDLE_MS) return false;
+        if (idle < (uint32_t)RGB_MATRIX_TIMEOUT + KB_IDLE_SLEEP_IDLE_MS) return false;
 #        else
         return false; // the backlight never times out
 #        endif
     }
 #    endif
-#    ifdef BT_MODULE_SLEEP_IDLE
+#    ifdef BLUETOOTH_ITON_BT
+#        ifdef BT_MODULE_SLEEP_IDLE
     if (bt_module_cfg_request || bt_module_cfg_step) return false;
+#        endif
+    if (iton_bt_task_pending()) return false; // false in USB mode: the driver is stopped
 #    endif
-    return !iton_bt_task_pending();
+    return true;
 }
 #endif
 
-#if defined(BLUETOOTH_ITON_BT) || defined(DEFERRED_EEPROM_SAVE)
+#if defined(BLUETOOTH_ITON_BT) || defined(DEFERRED_EEPROM_SAVE) || defined(KB_IDLE_SLEEP)
 void housekeeping_task_kb(void) {
 #ifdef BLUETOOTH_ITON_BT
     if (bt_indexes_dirty) {
@@ -641,15 +644,15 @@ void housekeeping_task_kb(void) {
     }
 #    endif
 #endif
-#if defined(BLUETOOTH_ITON_BT) && defined(BT_MCU_SLEEP)
-    if (bt_mcu_can_sleep()) {
+#ifdef KB_IDLE_SLEEP
+    if (kb_can_sleep()) {
 #    ifdef K3_DIAG
         uint32_t pause_start = timer_read32();
 #    endif
         // The main thread pauses, ChibiOS runs its idle thread, and the SN32 idle hook
         // puts the core to sleep until the next interrupt (LED/key scan timer every
         // ~0.46 ms, BT module INT, USB, the end of this pause).
-        wait_ms(BT_MCU_SLEEP_TICK_MS);
+        wait_ms(KB_IDLE_SLEEP_TICK_MS);
 #    ifdef K3_DIAG
         diag_sleep_paused_for(pause_start, timer_elapsed32(pause_start));
 #    endif
