@@ -450,6 +450,7 @@ void housekeeping_task_kb(void) {
 #    ifdef BT_KEEP_CONNECTION
     static uint8_t  sleep_cmd_queued = 0;
     static uint16_t sleep_cmd_time   = 0;
+    static bool     idle_timeout_set = false;
     uint8_t         sleep_cmd;
     ATOMIC_BLOCK_FORCEON {
         sleep_cmd    = bt_sleep_cmd;
@@ -459,12 +460,24 @@ void housekeeping_task_kb(void) {
         // The latest event wins: a disconnect right after a connect cancels disable_sleep.
         sleep_cmd_queued = sleep_cmd;
         sleep_cmd_time   = timer_read();
+        idle_timeout_set = false;
     }
     if (sleep_cmd_queued && timer_elapsed(sleep_cmd_time) > BT_SLEEP_CMD_DELAY_MS) {
-        if (flags.dip_switch) {
-            iton_bt_control_bt(sleep_cmd_queued);
+        if (sleep_cmd_queued == disable_sleep && !idle_timeout_set) {
+            // disable_sleep alone did not stop the idle disconnect (~2.5 min) on K3.
+            // First set the longest idle timeout the module knows, then send
+            // disable_sleep one delay later (frames must not go out back to back).
+            if (flags.dip_switch) {
+                iton_bt_control(control_power, sleep_idle_30m);
+            }
+            idle_timeout_set = true;
+            sleep_cmd_time   = timer_read();
+        } else {
+            if (flags.dip_switch) {
+                iton_bt_control_bt(sleep_cmd_queued);
+            }
+            sleep_cmd_queued = 0;
         }
-        sleep_cmd_queued = 0;
     }
 #    endif
 #endif
