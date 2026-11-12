@@ -424,7 +424,7 @@ bool rgb_matrix_indicators_advanced_user(uint8_t led_min, uint8_t led_max) {
                 }
 
                 if (is_inactive) {
-                    rgb_matrix_set_color(index, 0x01, 0x01, 0x01);
+                    rgb_matrix_set_color(index, 0, 0, 0);
                 } else {
                     rgb_matrix_set_color(index, color.r, color.g, color.b);
                 }
