@@ -52,6 +52,14 @@ bool bluetooth_is_connected(void) {
 #endif
 }
 
+#if defined(BLUETOOTH_ITON_BT) && defined(ITON_BT_ENABLE_LED_STATE)
+// Host LED state (Caps Lock etc.) as reported by the module, so the core
+// led_task() handles it the same way as in USB mode, including host switches.
+uint8_t bluetooth_keyboard_leds(void) {
+    return iton_bt_led_state;
+}
+#endif
+
 void bluetooth_send_keyboard(report_keyboard_t *report) {
 #if defined(BLUETOOTH_BLUEFRUIT_LE)
     bluefruit_le_send_keyboard(report);
