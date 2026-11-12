@@ -90,6 +90,18 @@ static volatile struct {
 } iton_bt_ack_queue = {0};
 #endif
 
+#if defined(ITON_BT_WAKE_ACK) && !defined(ITON_BT_ENABLE_ACK)
+// Stock K3 behaviour (V1.17): the only frame the MCU ever answers the module with is
+// control_bt wake_ack, about 10 ms after batt_wake_mcu, sent like any other frame.
+#    define ITON_BT_WAKE_ACK_ACTIVE
+#    ifndef ITON_BT_WAKE_ACK_DELAY_MS
+#        define ITON_BT_WAKE_ACK_DELAY_MS 10
+#    endif
+static volatile bool iton_bt_wake_ack_request = false; // set by the RX ISR
+static bool          iton_bt_wake_ack_waiting = false; // main loop: counting the delay
+static uint16_t      iton_bt_wake_ack_time    = 0;
+#endif
+
 const SPIConfig iton_bt_spicfg = {
     .slave   = true,
     .data_cb = iton_bt_data_cb,
@@ -264,11 +276,15 @@ static inline void iton_bt_rx_battery_notif(uint8_t data) {
             iton_bt_battery_level(data);
             break;
         case batt_wake_mcu:
-#    ifdef ITON_BT_ENABLE_ACK
+#    if defined(ITON_BT_ENABLE_ACK)
             iton_bt_send_ack(control_bt, wake_ack);
+#    elif defined(ITON_BT_WAKE_ACK_ACTIVE)
+            iton_bt_wake_ack_request = true; // sent by iton_bt_task() after the delay
 #    endif
             break;
         case batt_unknown:
+            // 0x08. The stock K3 firmware answers nothing and sleeps until the module
+            // raises INT (meaning not confirmed). The legacy ACK mode answers unknown_ack.
 #    ifdef ITON_BT_ENABLE_ACK
             iton_bt_send_ack(control_bt, unknown_ack);
 #    endif
@@ -321,10 +337,12 @@ static void iton_bt_rx_cb(void *arg) {
         iton_bt_bus_abort_locked();
         chSysUnlockFromISR();
 
-#    ifdef ITON_BT_ENABLE_ACK
-        // hack to make sure irq is low since acks messes with stuff
+        // The packet cut off whatever we were sending (iton_bt_bus_abort_locked() marked
+        // it for a retry): drop our request line, or the bus never looks idle again
+        // and the retry waits for ITON_BT_TX_TIMEOUT_MS. Used to sit under
+        // ITON_BT_ENABLE_ACK ("hack ... since acks messes with stuff"), but it is
+        // needed for every interrupted frame.
         gpio_write_pin_low(ITON_BT_IRQ_LINE);
-#    endif
 
         ITON_BT_TRACE('R', iton_bt_rx_buffer[0], iton_bt_rx_buffer[1], iton_bt_rx_buffer[2]);
         switch (iton_bt_rx_buffer[0]) {
@@ -374,6 +392,10 @@ void iton_bt_init(void) {
     iton_bt_ack_queue.head  = 0;
     iton_bt_ack_queue.count = 0;
 #endif
+#ifdef ITON_BT_WAKE_ACK_ACTIVE
+    iton_bt_wake_ack_request = false;
+    iton_bt_wake_ack_waiting = false;
+#endif
 
     gpio_set_pin_output(ITON_BT_IRQ_LINE);
     gpio_set_pin_input(ITON_BT_INT_LINE);
@@ -408,6 +430,10 @@ void iton_bt_deinit(void) {
 #ifdef ITON_BT_ENABLE_ACK
     iton_bt_ack_active      = false;
     iton_bt_ack_queue.count = 0;
+#endif
+#ifdef ITON_BT_WAKE_ACK_ACTIVE
+    iton_bt_wake_ack_request = false;
+    iton_bt_wake_ack_waiting = false;
 #endif
     chSysUnlock();
     iton_bt_is_connected = false;
@@ -493,6 +519,9 @@ bool iton_bt_task_pending(void) {
 #ifdef ITON_BT_ENABLE_ACK
     if (iton_bt_ack_queue.count > 0) return true;
 #endif
+#ifdef ITON_BT_WAKE_ACK_ACTIVE
+    if (iton_bt_wake_ack_request || iton_bt_wake_ack_waiting) return true;
+#endif
     return iton_bt_tx_retry;
 }
 
@@ -503,6 +532,18 @@ void iton_bt_task(void) {
     iton_bt_trace_print();
 #endif
     if (!iton_bt_initialized) return;
+
+#ifdef ITON_BT_WAKE_ACK_ACTIVE
+    if (iton_bt_wake_ack_request) {
+        iton_bt_wake_ack_request = false;
+        iton_bt_wake_ack_waiting = true;
+        iton_bt_wake_ack_time    = timer_read();
+    }
+    if (iton_bt_wake_ack_waiting && timer_elapsed(iton_bt_wake_ack_time) >= ITON_BT_WAKE_ACK_DELAY_MS) {
+        iton_bt_wake_ack_waiting = false;
+        iton_bt_control_bt(wake_ack);
+    }
+#endif
 
 #ifdef ITON_BT_ENABLE_ACK
     while (iton_bt_ack_queue.count > 0) {

@@ -24,7 +24,16 @@
 #define SYSTEM_CONTROL_USAGE_MAXIMUM 0x00B7
 
 #ifdef BLUETOOTH_ITON_BT
-    #define ITON_BT_ENABLE_ACK
+    // Replies to the module as the stock K3 firmware (V1.17) does: only control_bt
+    // wake_ack, about 10 ms after the module woke the MCU. ITON_BT_ENABLE_ACK (enabled
+    // since 9aea594458, "Fixing random disconnects") also answers connect, disconnect
+    // and 0x08 with 0x50/0x51/0x52, which the stock never sends. To go back to it,
+    // replace the next line with #define ITON_BT_ENABLE_ACK.
+    #define ITON_BT_WAKE_ACK
+    // How long a new frame waits for the module to clock out the previous one before
+    // dropping it. The stock gives up after 100 ms; the driver default of 3 s blocks
+    // the main loop (keys, LEDs) that long whenever the module does not respond.
+    #define ITON_BT_TX_TIMEOUT_MS 100
     #define ITON_BT_ENABLE_LED_STATE
     // Module sleep, as on the stock K3: after this long without key presses the module
     // drops the link and sleeps; the next key press wakes it and it reconnects.
