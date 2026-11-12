@@ -98,6 +98,73 @@ const SPIConfig iton_bt_spicfg = {
 #endif
 };
 
+#ifdef ITON_BT_DEBUG
+// Debug-only bus trace (-DITON_BT_DEBUG + CONSOLE_ENABLE). Events are recorded from
+// any context into a ring buffer and printed from iton_bt_task() in the main loop.
+#    include "print.h"
+#    define ITON_BT_TRACE_SIZE 48
+typedef struct {
+    uint16_t t;
+    char     type;
+    uint8_t  a, b, c;
+} iton_bt_trace_t;
+static volatile iton_bt_trace_t iton_bt_trace_buf[ITON_BT_TRACE_SIZE];
+static volatile uint8_t         iton_bt_trace_head = 0, iton_bt_trace_count = 0;
+static volatile uint16_t        iton_bt_trace_lost = 0;
+
+static void iton_bt_trace(char type, uint8_t a, uint8_t b, uint8_t c) {
+    syssts_t sts = chSysGetStatusAndLockX();
+    if (iton_bt_trace_count < ITON_BT_TRACE_SIZE) {
+        uint8_t i                  = (iton_bt_trace_head + iton_bt_trace_count) % ITON_BT_TRACE_SIZE;
+        iton_bt_trace_buf[i].t     = timer_read();
+        iton_bt_trace_buf[i].type  = type;
+        iton_bt_trace_buf[i].a     = a;
+        iton_bt_trace_buf[i].b     = b;
+        iton_bt_trace_buf[i].c     = c;
+        iton_bt_trace_count++;
+    } else {
+        iton_bt_trace_lost++;
+    }
+    chSysRestoreStatusX(sts);
+}
+
+static uint8_t iton_bt_spi_stat(void) {
+#    if defined(MCU_SN32)
+    return (uint8_t)ITON_BT_SPI_PORT.spi->STAT; // bit0 TX_EMPTY, bit2 RX_EMPTY, bit4 BUSY
+#    else
+    return 0xFF;
+#    endif
+}
+
+static void iton_bt_trace_print(void) {
+    for (;;) {
+        iton_bt_trace_t e;
+        syssts_t        sts = chSysGetStatusAndLockX();
+        if (iton_bt_trace_count == 0) {
+            chSysRestoreStatusX(sts);
+            break;
+        }
+        e.t    = iton_bt_trace_buf[iton_bt_trace_head].t;
+        e.type = iton_bt_trace_buf[iton_bt_trace_head].type;
+        e.a    = iton_bt_trace_buf[iton_bt_trace_head].a;
+        e.b    = iton_bt_trace_buf[iton_bt_trace_head].b;
+        e.c    = iton_bt_trace_buf[iton_bt_trace_head].c;
+        iton_bt_trace_head = (iton_bt_trace_head + 1) % ITON_BT_TRACE_SIZE;
+        iton_bt_trace_count--;
+        uint16_t lost      = iton_bt_trace_lost;
+        iton_bt_trace_lost = 0;
+        chSysRestoreStatusX(sts);
+        if (lost) uprintf("BT lost %u events\n", lost);
+        uprintf("BT %5u %c %02X %02X %02X\n", e.t, e.type, e.a, e.b, e.c);
+    }
+}
+#    define ITON_BT_TRACE(type, a, b, c) iton_bt_trace((type), (a), (b), (c))
+#    define ITON_BT_SPI_STAT() iton_bt_spi_stat()
+#else
+#    define ITON_BT_TRACE(type, a, b, c) ((void)0)
+#    define ITON_BT_SPI_STAT() 0
+#endif
+
 /**
  * Bus helpers. All of them must be called with the system locked
  * (chSysLock() from the main loop, chSysLockFromISR() from an ISR).
@@ -136,11 +203,29 @@ static inline void iton_bt_bus_abort_locked(void) {
     }
 }
 
+// Every frame we send must start from an empty TX FIFO. Since ChibiOS-Contrib
+// 30db011d05 the SN32 LLD pushes a 0x00 into the TX FIFO when a transfer
+// completes (for peers that keep clocking past the frame). If the module does
+// not clock it out, it would go out in front of our next frame and shift every
+// byte of it (e.g. a malformed enter_pairing command). The HAL's
+// spiStopTransferI() is a no-op in SPI_READY, so reset the FIFO directly.
+// FRESET is self-clearing; bytes written before it releases are flushed, so wait.
+static inline void iton_bt_tx_fifo_reset_locked(void) {
+#if defined(MCU_SN32)
+    SPIDriver *spip = &ITON_BT_SPI_PORT; // the LLD macro does not parenthesise its argument
+    SPI_FIFO_FRESET(spip);
+    for (uint16_t i = 0; spip->spi->CTRL0_b.FRESET && i < 1000; i++) {
+    }
+#endif
+}
+
 // Arm the SPI transfer first, then raise IRQ, so the module never clocks an empty FIFO.
 static inline void iton_bt_tx_start_locked(uint8_t len) {
     iton_bt_tx_len    = len;
     iton_bt_tx_retry  = false;
     iton_bt_tx_active = true;
+    ITON_BT_TRACE('T', iton_bt_tx_buffer[0], len, ITON_BT_SPI_STAT());
+    iton_bt_tx_fifo_reset_locked();
     spiStartSendI(&ITON_BT_SPI_PORT, len, iton_bt_tx_buffer);
     gpio_write_pin_high(ITON_BT_IRQ_LINE);
 }
@@ -151,6 +236,8 @@ static inline void iton_bt_ack_start_locked(uint8_t b1, uint8_t b2) {
     iton_bt_ack_buffer[1] = b1;
     iton_bt_ack_buffer[2] = b2;
     iton_bt_ack_active    = true;
+    ITON_BT_TRACE('A', b1, b2, ITON_BT_SPI_STAT());
+    iton_bt_tx_fifo_reset_locked();
     spiStartSendI(&ITON_BT_SPI_PORT, 3, iton_bt_ack_buffer);
     gpio_write_pin_high(ITON_BT_IRQ_LINE);
 }
@@ -224,6 +311,7 @@ static inline void iton_bt_rx_bluetooth_notif(uint8_t data) {
 
 static void iton_bt_rx_cb(void *arg) {
     if (gpio_read_pin(ITON_BT_INT_LINE)) {
+        ITON_BT_TRACE('I', ITON_BT_SPI_PORT.state, iton_bt_tx_active, ITON_BT_SPI_STAT());
         chSysLockFromISR();
         iton_bt_bus_abort_locked();
         spiStartReceiveI(&ITON_BT_SPI_PORT, ITON_BT_BUFFER_LEN, &iton_bt_rx_buffer[0]);
@@ -238,6 +326,7 @@ static void iton_bt_rx_cb(void *arg) {
         gpio_write_pin_low(ITON_BT_IRQ_LINE);
 #    endif
 
+        ITON_BT_TRACE('R', iton_bt_rx_buffer[0], iton_bt_rx_buffer[1], iton_bt_rx_buffer[2]);
         switch (iton_bt_rx_buffer[0]) {
             case led_state:
 #    ifdef ITON_BT_ENABLE_LED_STATE
@@ -262,6 +351,7 @@ static void iton_bt_rx_cb(void *arg) {
 #endif
 
 void iton_bt_data_cb(SPIDriver *spip) {
+    ITON_BT_TRACE('D', iton_bt_tx_active, 0, ITON_BT_SPI_STAT());
     iton_bt_tx_active = false;
 #ifdef ITON_BT_ENABLE_ACK
     iton_bt_ack_active = false;
@@ -298,6 +388,7 @@ void iton_bt_init(void) {
 #endif
 
     iton_bt_initialized = true;
+    ITON_BT_TRACE('B', 0, 0, ITON_BT_SPI_STAT());
 }
 
 void iton_bt_deinit(void) {
@@ -342,6 +433,7 @@ static bool iton_bt_bus_acquire(void) {
         if (iton_bt_bus_idle_locked()) return true;
         if (timed_out) {
             iton_bt_stats.tx_timeouts++;
+            ITON_BT_TRACE('O', ITON_BT_SPI_PORT.state, gpio_read_pin(ITON_BT_IRQ_LINE), ITON_BT_SPI_STAT());
             if (ITON_BT_SPI_PORT.state != SPI_READY) {
                 spiStopTransferI(&ITON_BT_SPI_PORT, NULL);
             }
@@ -396,6 +488,9 @@ void iton_bt_send_ack(uint8_t b1, uint8_t b2) {
 // Main loop: sends ACKs that could not go out from the ISR and retries a frame
 // that an incoming packet cut off.
 void iton_bt_task(void) {
+#ifdef ITON_BT_DEBUG
+    iton_bt_trace_print();
+#endif
     if (!iton_bt_initialized) return;
 
 #ifdef ITON_BT_ENABLE_ACK
@@ -417,6 +512,7 @@ void iton_bt_task(void) {
         // Only if no newer frame has replaced it in the meantime.
         if (iton_bt_tx_retry) {
             iton_bt_stats.tx_retried++;
+            ITON_BT_TRACE('X', iton_bt_tx_buffer[0], iton_bt_tx_len, 0);
             iton_bt_tx_start_locked(iton_bt_tx_len);
         }
         chSysUnlock();
