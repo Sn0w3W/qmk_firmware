@@ -352,6 +352,45 @@ static uint16_t diag_seen_timeouts = 0;
 static uint16_t diag_timeout_time  = 0;
 static bool     diag_timeout_flash = false;
 
+#    if defined(BLUETOOTH_ITON_BT) && defined(BT_MCU_SLEEP)
+// MCU sleep report: after a key press ends an idle period in which the MCU slept for
+// 1 s or more, for 5 s Esc shows the share of that period the main loop spent paused
+// (cyan 90 % and up, yellow 50 % and up, red below) and F1-F12 light cyan, one per
+// whole minute (all twelve: 12 min or more). The core sleeps in those pauses except
+// while an interrupt runs, so the share is an upper bound of its sleep time.
+static bool     diag_sleeping       = false; // an idle period with pauses is in progress
+static uint32_t diag_sleep_start    = 0;     // first pause of that period
+static uint32_t diag_sleep_paused   = 0;     // total pause time in it, ms
+static uint8_t  diag_sleep_minutes  = 0;
+static uint8_t  diag_sleep_share    = 0;     // percent
+static uint16_t diag_sleep_shown_at = 0;
+static bool     diag_sleep_show     = false;
+
+static void diag_sleep_paused_for(uint32_t pause_start, uint32_t ms) {
+    if (!diag_sleeping) {
+        diag_sleeping     = true;
+        diag_sleep_start  = pause_start;
+        diag_sleep_paused = 0;
+    }
+    diag_sleep_paused += ms;
+}
+
+// Called on every main loop pass. Short BT-driven wakes keep the period open; only
+// input (a key press) ends it.
+static void diag_sleep_check_wake(void) {
+    if (!diag_sleeping || last_input_activity_elapsed() >= BT_MCU_SLEEP_IDLE_MS) return;
+    diag_sleeping = false;
+    uint32_t span = timer_elapsed32(diag_sleep_start);
+    if (span < 1000) return;
+    uint32_t minutes    = span / 60000;
+    uint32_t share      = diag_sleep_paused / (span / 100);
+    diag_sleep_minutes  = minutes > 12 ? 12 : minutes;
+    diag_sleep_share    = share > 100 ? 100 : share;
+    diag_sleep_shown_at = timer_read();
+    diag_sleep_show     = true;
+}
+#    endif
+
 void keyboard_pre_init_kb(void) {
     diag_reset_flags = SN_SYS0->RSTST & 0x1F;
     SN_SYS0->RSTST   = 0x1F; // assumed write-1-to-clear; a stale cause after a plain power-on means it is not
@@ -390,6 +429,25 @@ static void diag_indicators(void) {
             rgb_matrix_set_color(g_led_config.matrix_co[0][1], RGB_ORANGE);
         } else {
             diag_timeout_flash = false;
+        }
+    }
+#    endif
+#    if defined(BLUETOOTH_ITON_BT) && defined(BT_MCU_SLEEP)
+    if (diag_sleep_show) {
+        if (timer_elapsed(diag_sleep_shown_at) < 5000) {
+            uint8_t esc = g_led_config.matrix_co[0][0];
+            if (diag_sleep_share >= 90) {
+                rgb_matrix_set_color(esc, RGB_CYAN);
+            } else if (diag_sleep_share >= 50) {
+                rgb_matrix_set_color(esc, RGB_YELLOW);
+            } else {
+                rgb_matrix_set_color(esc, RGB_RED);
+            }
+            for (uint8_t col = 1; col <= diag_sleep_minutes; col++) {
+                rgb_matrix_set_color(g_led_config.matrix_co[0][col], RGB_CYAN);
+            }
+        } else {
+            diag_sleep_show = false;
         }
     }
 #    endif
@@ -585,11 +643,20 @@ void housekeeping_task_kb(void) {
 #endif
 #if defined(BLUETOOTH_ITON_BT) && defined(BT_MCU_SLEEP)
     if (bt_mcu_can_sleep()) {
+#    ifdef K3_DIAG
+        uint32_t pause_start = timer_read32();
+#    endif
         // The main thread pauses, ChibiOS runs its idle thread, and the SN32 idle hook
         // puts the core to sleep until the next interrupt (LED/key scan timer every
         // ~0.46 ms, BT module INT, USB, the end of this pause).
         wait_ms(BT_MCU_SLEEP_TICK_MS);
+#    ifdef K3_DIAG
+        diag_sleep_paused_for(pause_start, timer_elapsed32(pause_start));
+#    endif
     }
+#    ifdef K3_DIAG
+    diag_sleep_check_wake();
+#    endif
 #endif
 }
 #endif
