@@ -27,6 +27,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     #ifndef KB_IDLE_SLEEP_TICK_MS
         #define KB_IDLE_SLEEP_TICK_MS 5 // main loop pause per pass while asleep
     #endif
+    // What kb_sleep_check() found in the way of sleeping (KB_SLEEP_OK: nothing).
+    #define KB_SLEEP_OK         0
+    #define KB_SLEEP_ACTIVE     1 // a key was pressed within KB_IDLE_SLEEP_IDLE_MS
+    #define KB_SLEEP_LIT        2 // the backlight is still on
+    #define KB_SLEEP_BT_CFG     3 // the module sleep setup is still being sent
+    #define KB_SLEEP_BT_PENDING 4 // the BT driver has ACKs or a retry for the main loop
 #endif
 
 #ifdef BLUETOOTH_ITON_BT
@@ -353,12 +359,17 @@ static uint16_t diag_timeout_time  = 0;
 static bool     diag_timeout_flash = false;
 
 #    ifdef KB_IDLE_SLEEP
-// MCU sleep report: after a key press ends an idle period in which the MCU slept for
-// 1 s or more, for 5 s Esc shows the share of that period the main loop spent paused
-// (cyan 90 % and up, yellow 50 % and up, red below) and F1-F12 light cyan, one per
-// whole minute (all twelve: 12 min or more). The core sleeps in those pauses except
-// while an interrupt runs, so the share is an upper bound of its sleep time.
+// MCU sleep report, shown for 5 s after the key press that ends an idle period:
+// - it slept for 1 s or more: Esc shows the share of that period the main loop spent
+//   paused (cyan 90 % and up, yellow 50 % and up, red below) and F1-F12 light cyan, one
+//   per whole minute (all twelve: 12 min or more). The core sleeps in those pauses
+//   except while an interrupt runs, so the share is an upper bound of its sleep time;
+// - it should have slept (no input, backlight dark) but never did: Esc purple, and red
+//   F1 if the module sleep setup was in the way, red F2 if the BT driver was busy.
+// Nothing at all: the idle period ended before the backlight went dark.
 static bool     diag_sleeping       = false; // an idle period with pauses is in progress
+static uint8_t  diag_block_seen     = 0;     // bit 0 KB_SLEEP_BT_CFG, bit 1 KB_SLEEP_BT_PENDING
+static uint8_t  diag_block_shown    = 0;     // the bits of the report on screen, 0 = slept
 static uint32_t diag_sleep_start    = 0;     // first pause of that period
 static uint32_t diag_sleep_paused   = 0;     // total pause time in it, ms
 static uint8_t  diag_sleep_minutes  = 0;
@@ -375,17 +386,30 @@ static void diag_sleep_paused_for(uint32_t pause_start, uint32_t ms) {
     diag_sleep_paused += ms;
 }
 
+// Blockers count only once the board should sleep (no input, backlight dark).
+static void diag_sleep_note(uint8_t block) {
+    if (block >= KB_SLEEP_BT_CFG) diag_block_seen |= 1 << (block - KB_SLEEP_BT_CFG);
+}
+
 // Called on every main loop pass. Short BT-driven wakes keep the period open; only
 // input (a key press) ends it.
 static void diag_sleep_check_wake(void) {
-    if (!diag_sleeping || last_input_activity_elapsed() >= KB_IDLE_SLEEP_IDLE_MS) return;
-    diag_sleeping = false;
-    uint32_t span = timer_elapsed32(diag_sleep_start);
-    if (span < 1000) return;
-    uint32_t minutes    = span / 60000;
-    uint32_t share      = diag_sleep_paused / (span / 100);
-    diag_sleep_minutes  = minutes > 12 ? 12 : minutes;
-    diag_sleep_share    = share > 100 ? 100 : share;
+    if (!diag_sleeping && !diag_block_seen) return;
+    if (last_input_activity_elapsed() >= KB_IDLE_SLEEP_IDLE_MS) return;
+    uint8_t blocked = diag_block_seen;
+    diag_block_seen = 0;
+    if (diag_sleeping) {
+        diag_sleeping = false;
+        uint32_t span = timer_elapsed32(diag_sleep_start);
+        if (span < 1000) return;
+        uint32_t minutes    = span / 60000;
+        uint32_t share      = diag_sleep_paused / (span / 100);
+        diag_sleep_minutes  = minutes > 12 ? 12 : minutes;
+        diag_sleep_share    = share > 100 ? 100 : share;
+        diag_block_shown    = 0; // it slept: blockers were only short BT wakes in between
+    } else {
+        diag_block_shown = blocked;
+    }
     diag_sleep_shown_at = timer_read();
     diag_sleep_show     = true;
 }
@@ -436,7 +460,11 @@ static void diag_indicators(void) {
     if (diag_sleep_show) {
         if (timer_elapsed(diag_sleep_shown_at) < 5000) {
             uint8_t esc = g_led_config.matrix_co[0][0];
-            if (diag_sleep_share >= 90) {
+            if (diag_block_shown) {
+                rgb_matrix_set_color(esc, RGB_PURPLE);
+                if (diag_block_shown & 1) rgb_matrix_set_color(g_led_config.matrix_co[0][1], RGB_RED);
+                if (diag_block_shown & 2) rgb_matrix_set_color(g_led_config.matrix_co[0][2], RGB_RED);
+            } else if (diag_sleep_share >= 90) {
                 rgb_matrix_set_color(esc, RGB_CYAN);
             } else if (diag_sleep_share >= 50) {
                 rgb_matrix_set_color(esc, RGB_YELLOW);
@@ -571,27 +599,27 @@ layer_state_t layer_state_set_kb(layer_state_t state) {
 // pauses the main loop), so the loop spins at 100 % all the time. Pause it while there
 // is nothing to do, in USB and BT mode, on battery or USB power alike; any key press
 // ends that within a few passes.
-static bool kb_can_sleep(void) {
+static uint8_t kb_sleep_check(void) {
     uint32_t idle = last_input_activity_elapsed();
-    if (idle < KB_IDLE_SLEEP_IDLE_MS) return false;
+    if (idle < KB_IDLE_SLEEP_IDLE_MS) return KB_SLEEP_ACTIVE;
 #    ifdef RGB_MATRIX_ENABLE
     // Animations and BT indicators are rendered by the main loop: wait for the
     // backlight timeout (plus the margin, for the frame that turns everything off).
     if (rgb_matrix_is_enabled() && !rgb_matrix_get_suspend_state()) {
 #        if RGB_MATRIX_TIMEOUT > 0
-        if (idle < (uint32_t)RGB_MATRIX_TIMEOUT + KB_IDLE_SLEEP_IDLE_MS) return false;
+        if (idle < (uint32_t)RGB_MATRIX_TIMEOUT + KB_IDLE_SLEEP_IDLE_MS) return KB_SLEEP_LIT;
 #        else
-        return false; // the backlight never times out
+        return KB_SLEEP_LIT; // the backlight never times out
 #        endif
     }
 #    endif
 #    ifdef BLUETOOTH_ITON_BT
 #        ifdef BT_MODULE_SLEEP_IDLE
-    if (bt_module_cfg_request || bt_module_cfg_step) return false;
+    if (bt_module_cfg_request || bt_module_cfg_step) return KB_SLEEP_BT_CFG;
 #        endif
-    if (iton_bt_task_pending()) return false; // false in USB mode: the driver is stopped
+    if (iton_bt_task_pending()) return KB_SLEEP_BT_PENDING; // never in USB mode: the driver is stopped
 #    endif
-    return true;
+    return KB_SLEEP_OK;
 }
 #endif
 
@@ -645,7 +673,8 @@ void housekeeping_task_kb(void) {
 #    endif
 #endif
 #ifdef KB_IDLE_SLEEP
-    if (kb_can_sleep()) {
+    uint8_t sleep_block = kb_sleep_check();
+    if (sleep_block == KB_SLEEP_OK) {
 #    ifdef K3_DIAG
         uint32_t pause_start = timer_read32();
 #    endif
@@ -658,6 +687,7 @@ void housekeeping_task_kb(void) {
 #    endif
     }
 #    ifdef K3_DIAG
+    diag_sleep_note(sleep_block);
     diag_sleep_check_wake();
 #    endif
 #endif
