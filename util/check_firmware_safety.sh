@@ -14,8 +14,15 @@ fi
 
 RAM_TOTAL=8192
 FLASH_TOTAL=65536
-FLASH_FLAG=4          # .flag section at 0xFFFC
-FLASH_USABLE=$((FLASH_TOTAL - FLASH_FLAG))
+FLASH_FLAG=4          # .flag section at 0xFFFC, counted by `size` as text
+# The emulated EEPROM (wear leveling) sits below the last 64-byte sector:
+# WEAR_LEVELING_BACKING_SIZE 2048, WEAR_LEVELING_EFL_OMIT_LAST_SECTOR_COUNT 1
+# -> 0xF7C0..0xFFBF. The linker script does not reserve it, so code past
+# 0xF7C0 links fine and is then erased by the first EEPROM consolidation.
+FLASH_SECTOR=64
+WL_BACKING=2048
+WL_BASE=$((FLASH_TOTAL - FLASH_SECTOR - WL_BACKING))
+FLASH_USABLE=$((WL_BASE + FLASH_FLAG))
 
 MAIN_STACK_WARN=600   # main() stack frame warning threshold
 PSTACK_SIZE=1536
